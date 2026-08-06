@@ -379,3 +379,43 @@ describe('titles', () => {
     expect(again.title).toBe('Camera shopping')
   })
 })
+
+describe('server-side compaction', () => {
+  it("summarize: 'server' asks GitLoom for the summary and folds it locally", async () => {
+    const compacts: Array<Record<string, unknown>> = []
+    const impl = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const u = new URL(String(url))
+      const body = init?.body ? JSON.parse(String(init.body)) : {}
+      const json = (v: unknown) => new Response(JSON.stringify(v), { status: 200 })
+      if (u.pathname === '/v1/conversations' && init?.method === 'POST')
+        return json({ id: body.id, branch: 'main', next_seq: 0 })
+      if (u.pathname.endsWith('/messages')) return json({ next_seq: 99, written: 1 })
+      if (u.pathname.endsWith('/compact')) {
+        compacts.push(body)
+        return json({ compacted: true, summary: 'server-written summary' })
+      }
+      return json({ branch: 'main', next_seq: 0, messages: [] })
+    })
+    const memory = new Gitloom({ apiKey: 'gl_x', fetch: impl as never, maxRetries: 0 })
+    const conv = await memory.conversations.create('c1', {
+      model: 'claude-sonnet-5',
+      compactEvery: 1,
+      summarize: 'server',
+    })
+    await conv.append([
+      { role: 'user', content: 'q1' },
+      { role: 'assistant', content: 'a1' },
+    ])
+    await conv.append([
+      { role: 'user', content: 'q2' },
+      { role: 'assistant', content: 'a2' },
+    ])
+    expect(compacts.length).toBeGreaterThanOrEqual(1)
+    // auto, and no client-written summary.
+    expect(compacts[0]!['auto']).toBe(true)
+    expect(compacts[0]!['summary']).toBeUndefined()
+    // The server's summary is now the conversation's context.
+    const first = conv.messages()[0]!
+    expect(String(first.content)).toContain('server-written summary')
+  })
+})

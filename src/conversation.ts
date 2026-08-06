@@ -43,11 +43,15 @@ export interface ConversationOptions {
   /** Exact token counter, when the caller has one. */
   countTokens?: TokenCounter
   /**
-   * Turns evicted content into a summary. Without one, compaction is refused
-   * rather than silently dropping the turns — losing a conversation's early
-   * history to save a round trip is not a trade an SDK should make quietly.
+   * Turns evicted content into a summary.
+   *
+   * A function summarizes locally, on the caller's model — GitLoom never sees
+   * the conversation. The string 'server' hands the job to GitLoom's own
+   * model instead: the turns are already stored there, and the client needs
+   * no model wired in at all. Without either, compaction is refused rather
+   * than silently dropping the turns.
    */
-  summarize?: Summarizer
+  summarize?: Summarizer | 'server'
   /**
    * Compact when the window is this full, as a fraction. Default 0.85.
    *
@@ -115,6 +119,11 @@ interface LoadResponse {
 export class Conversation {
   readonly id: string
   branch: string
+
+  /** The model whose window bounds this conversation. */
+  get model(): string | undefined {
+    return this.options.model
+  }
 
   /** Messages held locally: the summary of what came before, then live turns. */
   private history: ChatMessage[] = []
@@ -199,7 +208,7 @@ export class Conversation {
     if (options.usage) this.reportedTokens = usageTotal(options.usage)
     this.exchangesSinceCompaction += batch.filter((m) => m.role === 'assistant').length
 
-    if (this.options.summarize && (this.wouldOverflow(batch) || this.cadenceDue())) {
+    if (this.canCompact() && (this.wouldOverflow(batch) || this.cadenceDue())) {
       await this.compact()
     }
 
@@ -247,6 +256,10 @@ export class Conversation {
       out['content'] = m.content ?? ''
     }
     return out
+  }
+
+  private canCompact(): boolean {
+    return this.options.summarize !== undefined
   }
 
   /** Whether the exchange cadence says it is time to compact. */
@@ -362,6 +375,7 @@ export class Conversation {
    * summary flattened is still recallable later.
    */
   async compact(): Promise<{ summary: string; from: number; to: number } | null> {
+    if (this.options.summarize === 'server') return this.compactOnServer()
     const summarize = this.options.summarize
     if (!summarize) {
       throw new GitloomError(
@@ -428,6 +442,54 @@ export class Conversation {
     this.reportedTokens = 0
     this.cachedFit = null
     return { summary, from, to }
+  }
+
+  /**
+   * Server-side compaction: GitLoom's own model writes the summary from the
+   * stored turns. The developer's choice against local summarization — the
+   * turns are already stored server-side, and the client needs no model wired
+   * in at all. Costs one chat from the account's meter.
+   */
+  private async compactOnServer(): Promise<{ summary: string; from: number; to: number } | null> {
+    const evicted = this.serverEvictable()
+    if (evicted === 0) return null
+    const from = this.firstLiveSeq
+    const to = from + evicted - 1
+    const res = await this.client.request<{ summary?: string }>(
+      'POST',
+      `/v1/conversations/${encodeURIComponent(this.id)}/compact`,
+      { branch: this.branch, auto: true, from_seq: from, to_seq: to },
+    )
+    const summary = res.summary ?? ''
+    this.summaryMessage = {
+      role: 'system',
+      content: this.summaryMessage
+        ? `${this.summaryMessage.content}
+
+Then: ${summary}`
+        : `Earlier in this conversation: ${summary}`,
+    }
+    this.history = this.history.slice(evicted)
+    this.firstLiveSeq = to + 1
+    this.exchangesSinceCompaction = 0
+    this.reportedTokens = 0
+    this.cachedFit = null
+    return { summary, from, to }
+  }
+
+  /** How many of the held messages a compaction should cover right now. */
+  private serverEvictable(): number {
+    const model = this.options.model
+    if (model) {
+      const decided = fit(this.messages(), {
+        model,
+        ...(this.options.maxTokens !== undefined ? { maxTokens: this.options.maxTokens } : {}),
+        ...(this.options.countTokens ? { countTokens: this.options.countTokens } : {}),
+      })
+      if (decided.evicted.length > 0) return decided.evicted.length
+    }
+    if (this.history.length < 2) return 0
+    return this.history.length - Math.min(2, this.history.length - 1)
   }
 
   /**

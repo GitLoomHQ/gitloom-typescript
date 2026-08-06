@@ -171,3 +171,107 @@ describe('withMemory', () => {
     expect(namespaces).toEqual(['alice', 'bob', 'carol'])
   })
 })
+
+describe('drop-in conversation mode', () => {
+  function convServer() {
+    const stored: Array<{ role: string; content: string; seq: number }> = []
+    let nextSeq = 0
+    const impl = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const u = new URL(String(url))
+      const body = init?.body ? JSON.parse(String(init.body)) : {}
+      const json = (v: unknown) => new Response(JSON.stringify(v), { status: 200 })
+      if (u.pathname === '/v1/conversations' && init?.method === 'POST')
+        return json({ id: body.id, branch: 'main', next_seq: nextSeq })
+      if (u.pathname.endsWith('/messages')) {
+        for (const m of body.messages) stored.push({ ...m, seq: nextSeq++ })
+        return json({ next_seq: nextSeq, written: body.messages.length })
+      }
+      if (u.pathname === '/v1/retrieve')
+        return json({ namespace: 'ns', hits: [{ path: 'a.md', score: 1, snippet: 'likes Go' }], millis: 1 })
+      // load
+      return json({ id: body.id, branch: 'main', next_seq: nextSeq, messages: stored })
+    })
+    return { impl: impl as unknown as typeof fetch, stored }
+  }
+
+  it('the call site is the provider SDK, one field richer', async () => {
+    const api = convServer()
+    const memory = new Gitloom({ apiKey: 'gl_test_x', fetch: api.impl, maxRetries: 0 })
+    const seen: Array<Record<string, unknown>> = []
+    const fakeOpenAI = {
+      chat: {
+        completions: {
+          create: async (body: Record<string, unknown>) => {
+            seen.push(body)
+            return {
+              choices: [{ message: { content: `reply ${seen.length}` } }],
+              usage: { prompt_tokens: 10, completion_tokens: 5 },
+            }
+          },
+        },
+      },
+    }
+    const openai = withMemory(fakeOpenAI as never, { memory })
+
+    // First exchange: dev passes ONLY the new message.
+    await openai.chat.completions.create({
+      model: 'gpt-4o',
+      messages: [{ role: 'user', content: 'I like Go' }],
+      conversation: 'conv-1',
+    } as never)
+
+    // Both turns stored without the dev appending anything.
+    expect(api.stored.map((m) => m.role)).toEqual(['user', 'assistant'])
+
+    // Second exchange: the wrapper supplies the earlier turns itself.
+    await openai.chat.completions.create({
+      model: 'gpt-4o',
+      messages: [{ role: 'user', content: 'what do I like?' }],
+      conversation: 'conv-1',
+    } as never)
+
+    const secondCall = seen[1]!
+    const roles = (secondCall.messages as Array<{ role: string; content: string }>).map(
+      (m) => `${m.role}:${m.content}`,
+    )
+    expect(roles).toContain('user:I like Go')
+    expect(roles).toContain('assistant:reply 1')
+    expect(roles.at(-1)).toBe('user:what do I like?')
+    // The conversation field never reaches the provider.
+    expect('conversation' in secondCall).toBe(false)
+    // Memory context was injected as background.
+    expect(roles.some((r) => r.includes('likes Go'))).toBe(true)
+  })
+
+  it('anthropic-shaped clients move system content to the system field', async () => {
+    const api = convServer()
+    const memory = new Gitloom({ apiKey: 'gl_test_x', fetch: api.impl, maxRetries: 0 })
+    const seen: Array<Record<string, unknown>> = []
+    const fakeAnthropic = {
+      messages: {
+        create: async (body: Record<string, unknown>) => {
+          seen.push(body)
+          return {
+            content: [{ type: 'text', text: 'claude reply' }],
+            usage: { input_tokens: 8, output_tokens: 4 },
+          }
+        },
+      },
+    }
+    const anthropic = withMemory(fakeAnthropic as never, { memory })
+    await anthropic.messages.create({
+      model: 'claude-sonnet-5',
+      max_tokens: 512,
+      messages: [{ role: 'user', content: 'hello' }],
+      conversation: 'conv-2',
+    } as never)
+
+    const call = seen[0]!
+    expect('conversation' in call).toBe(false)
+    // Memory context landed in the system field, not the message array.
+    expect(String(call.system ?? '')).toContain('likes Go')
+    const roles = (call.messages as Array<{ role: string }>).map((m) => m.role)
+    expect(roles.every((r) => r !== 'system')).toBe(true)
+    expect(api.stored.map((m) => m.role)).toEqual(['user', 'assistant'])
+  })
+})
