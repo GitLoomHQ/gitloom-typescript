@@ -3,7 +3,7 @@
   "version": "0.7.0",
   "description": "Agentic memory for LLM apps \u2014 drop in beside the OpenAI or Anthropic SDK",
   "license": "MIT",
-  "homepage": "https://gitloom.cloud/docs/sdk.html",
+  "homepage": "https://docs.gitloom.cloud/documentation/typescript",
   "repository": {
     "type": "git",
     "url": "https://github.com/GitLoomHQ/gitloom-typescript.git"
