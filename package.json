@@ -1,6 +1,6 @@
 {
   "name": "@gitloomhq/sdk",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "Agentic memory for LLM apps \u2014 drop in beside the OpenAI or Anthropic SDK",
   "license": "MIT",
   "homepage": "https://gitloom.cloud/docs/sdk.html",

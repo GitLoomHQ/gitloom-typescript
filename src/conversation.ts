@@ -394,7 +394,8 @@ export class Conversation {
       // the latest exchange, which stays for continuity. Without this, cadence
       // compaction silently did nothing and no memories were ever ingested
       // from a conversation that fit its window.
-      const keep = Math.min(2, this.history.length)
+      if (this.history.length < 2) return null
+      const keep = Math.min(2, this.history.length - 1)
       evicted = this.history.slice(0, this.history.length - keep)
     }
     if (evicted.length === 0) return null
