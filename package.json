@@ -1,0 +1,54 @@
+{
+  "name": "@gitloomhq/sdk",
+  "version": "0.6.0",
+  "description": "Agentic memory for LLM apps \u2014 drop in beside the OpenAI or Anthropic SDK",
+  "license": "MIT",
+  "homepage": "https://gitloom.cloud/docs/sdk.html",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/GitLoomHQ/gitloom-typescript.git"
+  },
+  "bugs": {
+    "url": "https://github.com/MelloB1989/gitloom/issues"
+  },
+  "keywords": [
+    "memory",
+    "agents",
+    "llm",
+    "openai",
+    "anthropic",
+    "rag"
+  ],
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsup src/index.ts --format esm,cjs --dts --clean",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "devDependencies": {
+    "tsup": "^8.5.0",
+    "typescript": "~5.9.2",
+    "vitest": "^3.2.4"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
