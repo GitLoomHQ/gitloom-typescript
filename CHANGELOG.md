@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.8.0 — 2026-08-08
+
+- **Added features on the wrapped client.** `openai.gitloom.conversation(id)`
+  exposes rewind/edit/redaction/titles/branches on the same managed
+  conversation the completions flow through; `openai.gitloom.memory` for
+  direct recall/remember/media.
+- Documentation leads with the drop-in only; the manual append loop is gone.
+
 ## 0.7.0 — 2026-08-08
 
 - **Drop-in conversation mode.** `withMemory(openai, { memory })` now accepts a

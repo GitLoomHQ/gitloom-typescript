@@ -274,4 +274,33 @@ describe('drop-in conversation mode', () => {
     expect(roles.every((r) => r !== 'system')).toBe(true)
     expect(api.stored.map((m) => m.role)).toEqual(['user', 'assistant'])
   })
+
+  it('added features live on the wrapped client and share state', async () => {
+    const api = convServer()
+    const memory = new Gitloom({ apiKey: 'gl_test_x', fetch: api.impl, maxRetries: 0 })
+    const seen: Array<Record<string, unknown>> = []
+    const fakeOpenAI = {
+      chat: {
+        completions: {
+          create: async (body: Record<string, unknown>) => {
+            seen.push(body)
+            return { choices: [{ message: { content: 'ok' } }], usage: {} }
+          },
+        },
+      },
+    }
+    const openai = withMemory(fakeOpenAI as never, { memory })
+    await openai.chat.completions.create({
+      model: 'gpt-4o',
+      messages: [{ role: 'user', content: 'hello' }],
+      conversation: 'conv-9',
+    } as never)
+
+    const conv = await (openai as never as { gitloom: import('../src/wrap').GitloomFeatures })
+      .gitloom.conversation('conv-9')
+    await conv.setTitle('Named from the wrapper')
+    expect(conv.id).toBe('conv-9')
+    // Same object the wrapper appends through: its state reflects the call above.
+    expect(conv.seq).toBeGreaterThan(0)
+  })
 })

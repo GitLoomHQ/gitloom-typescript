@@ -101,6 +101,9 @@ export function withMemory<T extends object>(client: T, options: WrapOptions): T
 
   return new Proxy(client, {
     get(target, prop, receiver) {
+      // GitLoom's added features, on the wrapped client itself. The provider
+      // surface stays untouched beside it.
+      if (prop === 'gitloom') return featuresFor(options)
       const value = Reflect.get(target, prop, receiver)
       // Anthropic clients: client.messages.create.
       if (prop === 'messages' && hasCreate(value)) {
@@ -222,6 +225,26 @@ function wrapCreate(
     }
 
     return response
+  }
+}
+
+/**
+ * The added surface on a wrapped client: `openai.gitloom.conversation(id)` is
+ * the SAME managed conversation the completions flow through — a rewind there
+ * is what the next create({ conversation: id }) continues from — plus direct
+ * memory and media.
+ */
+export interface GitloomFeatures {
+  /** The managed conversation behind a `conversation:` id. */
+  conversation(id: string, model?: string): Promise<Conversation>
+  /** The underlying client, for recall/remember/media and everything else. */
+  memory: Gitloom
+}
+
+function featuresFor(options: WrapOptions): GitloomFeatures {
+  return {
+    memory: options.memory,
+    conversation: (id: string, model = '') => conversationFor(options, id, model),
   }
 }
 
