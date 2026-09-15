@@ -131,6 +131,8 @@ export class Conversation {
   /** Sequence of the first live message, so compaction knows what it covers. */
   private firstLiveSeq = 0
   private summaryMessage: ChatMessage | null = null
+  /** Range the current summary stands in for, so `summary` can report it. */
+  private compactionRange: { from_seq: number; to_seq: number } | null = null
   /** Cached fit, invalidated whenever history changes. */
   private cachedFit: { key: string; value: Fitted } | null = null
   /** Exchanges (user turn + reply) appended since the last compaction. */
@@ -153,6 +155,40 @@ export class Conversation {
   /** The messages currently held, summary first. */
   messages(): ChatMessage[] {
     return this.summaryMessage ? [this.summaryMessage, ...this.history] : [...this.history]
+  }
+
+  /**
+   * The live messages with the sequence each one occupies.
+   *
+   * `messages()` is shaped for a provider, which has no use for a sequence and
+   * would reject the extra field, so it drops them. But `edit`, `editInPlace`
+   * and `rewind` are all addressed BY sequence — without this, the public API
+   * offers three ways to change a message and no way to learn which number to
+   * change. Building the dashboard's own chat against this SDK is what found
+   * that; a UI cannot offer "edit this message" if it cannot name it.
+   *
+   * The summary is deliberately absent: it stands in for turns that are no
+   * longer live, so it has no sequence to edit or rewind to.
+   */
+  entries(): Array<ChatMessage & { seq: number }> {
+    return this.history.map((m, i) => ({ ...m, seq: this.firstLiveSeq + i }))
+  }
+
+  /**
+   * The compaction currently standing in for earlier turns, if any.
+   *
+   * Exposed for the same reason as `entries`: a caller that renders a
+   * conversation has to be able to say why the transcript starts where it
+   * does, and the summary is the only honest answer.
+   */
+  get summary(): { text: string; from: number; to: number } | null {
+    return this.compactionRange && this.summaryMessage
+      ? {
+          text: typeof this.summaryMessage.content === 'string' ? this.summaryMessage.content : '',
+          from: this.compactionRange.from_seq,
+          to: this.compactionRange.to_seq,
+        }
+      : null
   }
 
   /** Sequence the next appended message will take. */
@@ -184,6 +220,9 @@ export class Conversation {
     this.summaryMessage = res.compaction
       ? { role: 'system', content: `Earlier in this conversation: ${res.compaction.summary}` }
       : null
+    this.compactionRange = res.compaction
+      ? { from_seq: res.compaction.from_seq, to_seq: res.compaction.to_seq }
+      : null
     if (res.model && !this.options.model) this.options = { ...this.options, model: res.model }
     this.cachedFit = null
     return this
@@ -206,7 +245,13 @@ export class Conversation {
     // conversation's tokens on the last completion; a caller who passes that
     // usage through gets compaction timed by truth rather than heuristic.
     if (options.usage) this.reportedTokens = usageTotal(options.usage)
-    this.exchangesSinceCompaction += batch.filter((m) => m.role === 'assistant').length
+    // An exchange ends when the assistant ANSWERS. An assistant turn carrying
+    // tool_calls is the middle of one, so counting it would make a question
+    // that called two tools look like three exchanges and pull every
+    // cadence-based compaction forward by that much.
+    this.exchangesSinceCompaction += batch.filter(
+      (m) => m.role === 'assistant' && !m.tool_calls?.length,
+    ).length
 
     if (this.canCompact() && (this.wouldOverflow(batch) || this.cadenceDue())) {
       await this.compact()
@@ -434,6 +479,7 @@ export class Conversation {
         ? `${this.summaryMessage.content}\n\nThen: ${summary}`
         : `Earlier in this conversation: ${summary}`,
     }
+    this.compactionRange = { from_seq: this.compactionRange?.from_seq ?? from, to_seq: to }
     this.history = this.history.slice(evicted.length)
     this.firstLiveSeq = to + 1
     this.exchangesSinceCompaction = 0
@@ -469,6 +515,7 @@ export class Conversation {
 Then: ${summary}`
         : `Earlier in this conversation: ${summary}`,
     }
+    this.compactionRange = { from_seq: this.compactionRange?.from_seq ?? from, to_seq: to }
     this.history = this.history.slice(evicted)
     this.firstLiveSeq = to + 1
     this.exchangesSinceCompaction = 0

@@ -8,6 +8,7 @@
  */
 
 import type { Gitloom } from './client'
+import type { Tier } from './types'
 
 const RECALL_DESCRIPTION =
   'Search what you already know about this user from earlier conversations. ' +
@@ -19,6 +20,11 @@ const REMEMBER_DESCRIPTION =
   'Call this when they state a durable fact about themselves: a preference, a decision, ' +
   'a possession, a plan, a relationship. Do not save small talk or anything you inferred.'
 
+const FIND_SKILL_DESCRIPTION =
+  'Look up how to do something the user has taught you before: a procedure, a checklist, ' +
+  'a way of working. Call this before carrying out a multi-step task, so you follow their ' +
+  'way of doing it rather than inventing one.'
+
 const recallParameters = {
   type: 'object',
   properties: {
@@ -26,8 +32,32 @@ const recallParameters = {
       type: 'string',
       description: 'What you want to know, phrased as a question in the user\'s own terms.',
     },
+    tiers: {
+      type: 'array',
+      items: { type: 'string', enum: ['facts', 'incidents', 'rules', 'skills'] },
+      description:
+        'Optional: only these kinds of memory. facts are stable knowledge, incidents dated events, ' +
+        'rules standing instructions, skills procedures.',
+    },
+    paths: {
+      type: 'array',
+      items: { type: 'string' },
+      description: 'Optional: only memories under these directories, e.g. "facts/events".',
+    },
   },
   required: ['query'],
+  additionalProperties: false,
+} as const
+
+const findSkillParameters = {
+  type: 'object',
+  properties: {
+    task: {
+      type: 'string',
+      description: 'The task you are about to do, in a few words.',
+    },
+  },
+  required: ['task'],
   additionalProperties: false,
 } as const
 
@@ -66,6 +96,12 @@ export const mcpTools = [
     inputSchema: rememberParameters,
     annotations: { readOnlyHint: false, idempotentHint: false },
   },
+  {
+    name: 'find_skill',
+    description: FIND_SKILL_DESCRIPTION,
+    inputSchema: findSkillParameters,
+    annotations: { readOnlyHint: true, idempotentHint: true },
+  },
 ] as const
 
 /** Tool definitions in OpenAI's function-calling format. */
@@ -86,12 +122,21 @@ export const openaiTools = [
       parameters: rememberParameters,
     },
   },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'find_skill',
+      description: FIND_SKILL_DESCRIPTION,
+      parameters: findSkillParameters,
+    },
+  },
 ]
 
 /** The same tools in Anthropic's format. */
 export const anthropicTools = [
   { name: 'recall_memory', description: RECALL_DESCRIPTION, input_schema: recallParameters },
   { name: 'save_memory', description: REMEMBER_DESCRIPTION, input_schema: rememberParameters },
+  { name: 'find_skill', description: FIND_SKILL_DESCRIPTION, input_schema: findSkillParameters },
 ]
 
 export interface ToolCall {
@@ -116,9 +161,22 @@ export async function runTool(
       case 'recall_memory': {
         const query = String(call.arguments.query ?? '')
         if (!query) return 'No query was provided.'
-        const { memories } = await client.recall(query, { namespace: options.namespace })
+        const { memories } = await client.recall(query, {
+          namespace: options.namespace,
+          tiers: stringList(call.arguments.tiers) as Tier[],
+          paths: stringList(call.arguments.paths),
+        })
         if (memories.length === 0) return 'Nothing relevant is stored about this user yet.'
-        return memories.map((m) => `- ${m.text}`).join('\n')
+        return memories.map((m) => `- ${m.content}`).join('\n')
+      }
+      case 'find_skill': {
+        const task = String(call.arguments.task ?? '')
+        if (!task) return 'No task was provided.'
+        const skills = await client.skills.find(task, { namespace: options.namespace, limit: 3 })
+        if (skills.length === 0) return 'No stored skill applies to this task.'
+        return skills
+          .map((s) => `## ${s.name}\n${s.description ? s.description + '\n' : ''}${s.content}`)
+          .join('\n\n')
       }
       case 'save_memory': {
         const fact = String(call.arguments.fact ?? '')
@@ -136,7 +194,13 @@ export async function runTool(
   }
 }
 
+function stringList(v: unknown): string[] | undefined {
+  if (!Array.isArray(v)) return undefined
+  const out = v.filter((x): x is string => typeof x === 'string' && x !== '')
+  return out.length ? out : undefined
+}
+
 /** True when a tool call belongs to this SDK, so a dispatcher can route it. */
 export function isMemoryTool(name: string): boolean {
-  return name === 'recall_memory' || name === 'save_memory'
+  return name === 'recall_memory' || name === 'save_memory' || name === 'find_skill'
 }

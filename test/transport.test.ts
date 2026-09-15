@@ -203,18 +203,19 @@ describe('for()', () => {
   })
 })
 
-// The SDK must pass the server's rich hit shape through untouched. It used to
-// keep only path/snippet/score — the same silent gutting the playground had —
-// so "results are uniform everywhere" quietly stopped at the SDK boundary.
+// The SDK must pass the server's rich memory shape through untouched, so
+// "results are uniform everywhere" does not stop at the SDK boundary.
 it('recall passes scores, provenance and relations through', async () => {
   const rich = {
     namespace: 'ns',
-    hits: [
+    memories: [
       {
         path: 'facts/a.md',
+        tier: 'facts',
+        content: 'A.',
         score: 0.5,
-        snippet: 'A.',
-        scores: { bm25: 1.2, cue: 0.4, arms: ['lexical', 'cue'] },
+        matched: ['lexical', 'cue'],
+        scores: { bm25: 1.2, cue: 0.4 },
         provenance: {
           commit: 'abc123',
           when: '2026-08-06T00:00:00Z',
@@ -222,7 +223,7 @@ it('recall passes scores, provenance and relations through', async () => {
           history: [{ commit: 'abc123', when: '2026-08-06T00:00:00Z' }],
           diff: 'diff --git a/facts/a.md b/facts/a.md',
         },
-        relations: [{ label: 'same-trip', path: 'facts/b.md', snippet: 'B.' }],
+        related: [{ label: 'same-trip', path: 'facts/b.md', snippet: 'B.' }],
       },
     ],
     defined: [{ path: 'vocab/term.md', term: 'RRF' }],
@@ -231,9 +232,9 @@ it('recall passes scores, provenance and relations through', async () => {
   const { impl } = fetchStub(json(rich))
   const res = await client(impl).recall('anything')
   const m = res.memories[0]!
-  expect(m.scores?.arms).toEqual(['lexical', 'cue'])
+  expect(m.matched).toEqual(['lexical', 'cue'])
   expect(m.provenance?.commit).toBe('abc123')
   expect(m.provenance?.diff).toContain('diff --git')
-  expect(m.relations?.[0]?.snippet).toBe('B.')
+  expect(m.related?.[0]?.snippet).toBe('B.')
   expect(res.defined?.[0]?.term).toBe('RRF')
 })

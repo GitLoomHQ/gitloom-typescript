@@ -1,2 +1,7 @@
 node_modules/
 dist/
+
+# No lockfile is tracked: this is a library with zero runtime dependencies,
+# so consumers resolve their own tree and CI installs fresh.
+bun.lock
+bun.lockb

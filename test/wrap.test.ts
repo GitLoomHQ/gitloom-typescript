@@ -12,7 +12,7 @@ import { Gitloom, withMemory } from '../src'
 
 const KEY = 'gl_test_abc_secret'
 
-function memoryStub(hits: Array<{ path: string; snippet: string; score: number }> = []) {
+function memoryStub(memories: Array<{ path: string; content: string; score: number }> = []) {
   const saved: unknown[] = []
   const impl = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
     const u = String(url)
@@ -20,7 +20,7 @@ function memoryStub(hits: Array<{ path: string; snippet: string; score: number }
       saved.push(JSON.parse(String(init?.body)))
       return new Response(JSON.stringify({ id: 's1', namespace: 'default', status: 'queued' }))
     }
-    return new Response(JSON.stringify({ namespace: 'default', hits, millis: 1 }))
+    return new Response(JSON.stringify({ namespace: 'default', memories, millis: 1 }))
   })
   const memory = new Gitloom({ apiKey: KEY, fetch: impl as unknown as typeof fetch, maxRetries: 0 })
   return { memory, saved, impl }
@@ -46,7 +46,7 @@ function fakeOpenAI() {
 
 describe('withMemory', () => {
   it('never leaks its own options to the provider', async () => {
-    const { memory } = memoryStub([{ path: 'a', snippet: 'lives in Lisbon', score: 1 }])
+    const { memory } = memoryStub([{ path: 'a', content: 'lives in Lisbon', score: 1 }])
     const openai = fakeOpenAI()
     const wrapped = withMemory(openai as any, { memory })
 
@@ -66,7 +66,7 @@ describe('withMemory', () => {
   })
 
   it('keeps one user\'s memories out of another\'s conversation', async () => {
-    const { memory, impl } = memoryStub([{ path: 'a', snippet: 'secret', score: 1 }])
+    const { memory, impl } = memoryStub([{ path: 'a', content: 'secret', score: 1 }])
     const openai = fakeOpenAI()
     const wrapped = withMemory(openai as any, { memory })
 
@@ -85,7 +85,7 @@ describe('withMemory', () => {
   })
 
   it('does not mutate the caller\'s messages array', async () => {
-    const { memory } = memoryStub([{ path: 'a', snippet: 'lives in Lisbon', score: 1 }])
+    const { memory } = memoryStub([{ path: 'a', content: 'lives in Lisbon', score: 1 }])
     const openai = fakeOpenAI()
     const wrapped = withMemory(openai as any, { memory })
 
@@ -187,7 +187,7 @@ describe('drop-in conversation mode', () => {
         return json({ next_seq: nextSeq, written: body.messages.length })
       }
       if (u.pathname === '/v1/retrieve')
-        return json({ namespace: 'ns', hits: [{ path: 'a.md', score: 1, snippet: 'likes Go' }], millis: 1 })
+        return json({ namespace: 'ns', memories: [{ path: 'a.md', score: 1, content: 'likes Go' }], millis: 1 })
       // load
       return json({ id: body.id, branch: 'main', next_seq: nextSeq, messages: stored })
     })
@@ -211,7 +211,7 @@ describe('drop-in conversation mode', () => {
         },
       },
     }
-    const openai = withMemory(fakeOpenAI as never, { memory })
+    const openai = withMemory(fakeOpenAI, { memory })
 
     // First exchange: dev passes ONLY the new message.
     await openai.chat.completions.create({
@@ -258,7 +258,7 @@ describe('drop-in conversation mode', () => {
         },
       },
     }
-    const anthropic = withMemory(fakeAnthropic as never, { memory })
+    const anthropic = withMemory(fakeAnthropic, { memory })
     await anthropic.messages.create({
       model: 'claude-sonnet-5',
       max_tokens: 512,
@@ -289,7 +289,7 @@ describe('drop-in conversation mode', () => {
         },
       },
     }
-    const openai = withMemory(fakeOpenAI as never, { memory })
+    const openai = withMemory(fakeOpenAI, { memory })
     await openai.chat.completions.create({
       model: 'gpt-4o',
       messages: [{ role: 'user', content: 'hello' }],

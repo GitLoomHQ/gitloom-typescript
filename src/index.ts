@@ -8,6 +8,8 @@ export type { GitloomFeatures } from './wrap'
 export { Conversation } from './conversation'
 export type { Usage } from './conversation'
 export { Media, textPart, imagePart, imageData } from './media'
+export { Vocab, Skills } from './memory'
+export type { VocabOptions } from './memory'
 export type { MediaInfo, MediaWithURL } from './media'
 export type { ConversationOptions, LoadOptions, Summarizer } from './conversation'
 export { fit, assertFits } from './context'
@@ -20,13 +22,24 @@ export type {
   RememberOptions,
   RememberResult,
   RecallOptions,
+  RecallFilters,
+  RecallMode,
   RecallResult,
   RecalledMemory,
+  RecallTimings,
+  TraceEvent,
+  AnswerOptions,
+  AnswerResult,
+  Tier,
   HitScores,
   Provenance,
   Revision,
   Relation,
   VocabHit,
+  VocabTerm,
+  SkillInput,
+  Skill,
+  SkillQueryOptions,
   KeyInfo,
   CreateKeyResult,
 } from './types'

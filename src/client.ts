@@ -9,18 +9,18 @@
 import { GitloomError, errorFromResponse } from './errors'
 import { Conversation, type ConversationOptions } from './conversation'
 import { Media } from './media'
+import { Skills, Vocab } from './memory'
 import type {
+  AnswerOptions,
+  AnswerResult,
   CreateKeyResult,
-  HitScores,
   KeyInfo,
   Memory,
-  Provenance,
   RecallOptions,
   RecallResult,
-  Relation,
+  RecalledMemory,
   RememberOptions,
   RememberResult,
-  VocabHit,
 } from './types'
 
 export interface GitloomOptions {
@@ -164,38 +164,71 @@ export class Gitloom {
     return false
   }
 
-  /** Retrieves the memories bearing on a question. */
+  /**
+   * Retrieves the memories bearing on a question.
+   *
+   * Every entry is one whole memory, scored on a calibrated 0–1 scale. Filters
+   * narrow every retrieval arm, so a memory outside them cannot surface even
+   * as a graph neighbour. `mode: 'summary'` adds a text answer from a fast
+   * model; `mode: 'agentic'` lets a stronger model search for itself.
+   */
   async recall(query: string, options: RecallOptions = {}): Promise<RecallResult> {
     const params = new URLSearchParams({ q: query })
     params.set('namespace', options.namespace ?? this.namespace)
     if (options.limit) params.set('limit', String(options.limit))
-    const res = await this.request<{
-      namespace: string
-      hits: Array<{
-        path: string
-        score: number
-        snippet: string
-        scores?: HitScores
-        provenance?: Provenance
-        relations?: Relation[]
-      }> | null
-      defined?: VocabHit[]
-      millis: number
-    }>('GET', `/v1/retrieve?${params.toString()}`, undefined, { signal: options.signal })
+    if (options.mode && options.mode !== 'raw') params.set('mode', options.mode)
+    if (options.tiers?.length) params.set('tiers', options.tiers.join(','))
+    if (options.paths?.length) params.set('paths', options.paths.join(','))
+    if (options.tags?.length) params.set('tags', options.tags.join(','))
+    if (options.tagsAll?.length) params.set('tags_all', options.tagsAll.join(','))
+    if (options.since) params.set('since', dateParam(options.since))
+    if (options.until) params.set('until', dateParam(options.until))
+    if (options.minScore !== undefined) params.set('min_score', String(options.minScore))
+    if (options.context === false) params.set('context', '0')
+    if (options.detail === 'full') params.set('detail', 'full')
+    if (options.includeExpired) params.set('include_expired', '1')
+    const res = await this.request<Partial<RecallResult> & { memories?: RecalledMemory[] | null }>(
+      'GET',
+      `/v1/retrieve?${params.toString()}`,
+      undefined,
+      { signal: options.signal },
+    )
     return {
-      namespace: res.namespace,
-      // The full server shape passes through. The SDK used to keep only
-      // path/snippet/score — the same silent gutting the playground had — so
-      // "results are uniform everywhere" stopped at the SDK boundary.
-      memories: (res.hits ?? []).map((h) => ({
-        id: h.path,
-        text: h.snippet,
-        score: h.score,
-        scores: h.scores,
-        provenance: h.provenance,
-        relations: h.relations,
-      })),
+      namespace: res.namespace ?? options.namespace ?? this.namespace,
+      query: res.query ?? query,
+      mode: res.mode ?? options.mode ?? 'raw',
+      memories: res.memories ?? [],
       ...(res.defined ? { defined: res.defined } : {}),
+      ...(res.answer ? { answer: res.answer } : {}),
+      ...(res.model ? { model: res.model } : {}),
+      ...(res.trace ? { trace: res.trace } : {}),
+      ...(res.truncated ? { truncated: res.truncated } : {}),
+      candidates: res.candidates ?? res.memories?.length ?? 0,
+      filteredOut: res.filteredOut ?? (res as { filtered_out?: number }).filtered_out ?? 0,
+      millis: res.millis ?? 0,
+      timings: res.timings ?? { lexical_ms: 0, vector_ms: 0, graph_ms: 0 },
+    }
+  }
+
+  /**
+   * One text answer to a question, from the memory.
+   *
+   * By default a fast model summarizes one retrieval; with `agentic: true` a
+   * stronger model searches the memory itself with tools. Both are metered as
+   * a chat, not a read. The memories the answer rests on come back alongside.
+   */
+  async answer(query: string, options: AnswerOptions = {}): Promise<AnswerResult> {
+    const { agentic, ...rest } = options
+    const res = await this.recall(query, { ...rest, mode: agentic ? 'agentic' : 'summary' })
+    if (!res.answer) {
+      throw new GitloomError('no_answer', 'The model did not produce an answer', 0)
+    }
+    return {
+      answer: res.answer,
+      model: res.model,
+      memories: res.memories,
+      trace: res.trace,
+      truncated: res.truncated,
       millis: res.millis,
     }
   }
@@ -218,8 +251,18 @@ export class Gitloom {
       'What you already know about this user, from earlier conversations. Treat it as background, not as something they just said:'
     return {
       role: 'system',
-      content: `${header}\n${memories.map((m) => `- ${m.text}`).join('\n')}`,
+      content: `${header}\n${memories.map((m) => `- ${m.content}`).join('\n')}`,
     }
+  }
+
+  /** The namespace's custom vocabulary: learn, list, look up and forget terms. */
+  get vocab(): Vocab {
+    return new Vocab(this)
+  }
+
+  /** Procedural know-how: store skills and find the ones that bear on a task. */
+  get skills(): Skills {
+    return new Skills(this)
   }
 
   // --- keys (dashboard sessions only) ---
@@ -345,6 +388,10 @@ export class Gitloom {
   }
 }
 
+function dateParam(d: string | Date): string {
+  return d instanceof Date ? d.toISOString() : d
+}
+
 function abortedError(): GitloomError {
   return new GitloomError('aborted', 'Request aborted by the caller', 0)
 }
@@ -393,11 +440,31 @@ export class Conversations {
     return conv
   }
 
-  /** List this account's conversations, most recent first. */
-  async list(): Promise<Array<{ id: string; title?: string; branch: string; updated_at: string }>> {
+  /**
+   * List conversations, most recent first.
+   *
+   * A namespace scopes them to one memory. The usual shape is a namespace per
+   * end user, so "every conversation on the account" is rarely the question —
+   * "this user's conversations" is, and without a scope a caller would have to
+   * fetch everyone's and filter client-side.
+   */
+  async list(
+    options: { namespace?: string } = {},
+  ): Promise<
+    Array<{ id: string; title?: string; branch: string; namespace?: string; updated_at: string }>
+  > {
+    const qs = options.namespace
+      ? `?namespace=${encodeURIComponent(options.namespace)}`
+      : ''
     const res = await this.client.request<{
-      conversations: Array<{ id: string; title?: string; branch: string; updated_at: string }>
-    }>('GET', '/v1/conversations')
+      conversations: Array<{
+        id: string
+        title?: string
+        branch: string
+        namespace?: string
+        updated_at: string
+      }>
+    }>('GET', `/v1/conversations${qs}`)
     return res.conversations ?? []
   }
 }

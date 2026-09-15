@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.9.0 — 2026-09-15
+
+- **Recall returns memories, not fragments.** `recall()` now yields one entry per
+  memory — `content` is the whole body, `sections` names the headings that
+  matched — where it used to return one hit per matching section, each carrying
+  its own copy of the same provenance and relations.
+- **`score` is a calibrated relevance in `[0, 1]`**, comparable across queries,
+  replacing a fused rank that only meant something within one response.
+  `matched` says which arms produced a result, so a graph neighbour is
+  distinguishable from evidence, and `via` names what pulled it in.
+- **Filters on `recall()`**: `tiers`, `paths`, `tags`, `tagsAll`, `since`,
+  `until`, `minScore`, `context`, `detail`. They apply inside every retrieval
+  arm server-side, so confining a query to a directory is a real boundary.
+- **`answer()`** — one text answer from the memory. A fast model summarizes the
+  retrieval by default; `{ agentic: true }` lets a stronger model search with
+  tools and return its trace. Both meter as chats rather than reads.
+- **`vocab` and `skills`.** `memory.vocab.learn/list/lookup/forget` teaches a
+  namespace the terms its memories are written in, so a query for one surface
+  form finds another. `memory.skills.store/find/list` keeps procedural
+  know-how and finds the one that fits a task.
+- **`find_skill` tool** exported beside `recall_memory` and `save_memory`, in
+  every tool format including MCP.
+
+**Breaking.** The server field is `memories`, not `hits`; `RecalledMemory` gained
+`path`/`content` in place of `id`/`text`, and `relations` is now `related`.
+Requires the API deployed on or after 2026-09-15.
+
 ## 0.8.0 — 2026-08-08
 
 - **Added features on the wrapped client.** `openai.gitloom.conversation(id)`

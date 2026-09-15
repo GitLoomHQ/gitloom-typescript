@@ -62,8 +62,57 @@ await conv.branches()
 
 These act on the **same managed conversation** the completions flow through.
 Direct memory: `openai.gitloom.memory.recall(...)` / `.remember(...)` — every
-hit carries per-arm scores, git history with the last diff, and relation
-snippets.
+result is one whole memory with a calibrated 0–1 score, which arms matched it,
+its tags and dates, its edges, and its last commit.
+
+## Recall, filtered and answered
+
+```ts
+// Ranked memories, no model call. Milliseconds.
+const { memories } = await memory.recall('what camera do I own', {
+  tiers: ['facts'],                 // facts | incidents | rules | skills
+  paths: ['facts/gear'],            // any directories
+  tags: ['camera'],
+  since: '2026-01-01',
+  minScore: 0.3,
+  limit: 8,
+})
+for (const m of memories) console.log(m.score.toFixed(2), m.path, m.matched, m.content)
+
+// One text answer from a fast model over that retrieval …
+const { answer, memories: evidence } = await memory.answer('what camera do I own')
+// … or let a stronger model search the memory itself with tools.
+const agentic = await memory.answer('which of my trips had the longest flight', { agentic: true })
+console.log(agentic.answer, agentic.trace)
+```
+
+`answer` is metered as a chat, not a read. `recall` with `mode: 'summary'` or
+`mode: 'agentic'` is the same thing with the memories and timings alongside.
+
+## Vocabulary and skills
+
+```ts
+// Teach abbreviations and domain terms. A recall for "k8s" then also finds
+// memories written "kubernetes", and the definition comes back as `defined`.
+await memory.vocab.learn([
+  { term: 'kubernetes', aliases: ['k8s', 'kube'], definition: 'Container orchestration.' },
+])
+await memory.vocab.lookup('k8s')          // → { term: 'kubernetes', aliases: [...] }
+await memory.vocab.list({ like: 'kube' })
+await memory.vocab.forget(['kubernetes'])
+
+// Store how things are done; find the skill that fits a task.
+await memory.skills.store([
+  { name: 'Deploy to production', topic: 'ops', description: 'Ship a release.',
+    content: '## Steps\n1. Tag the release.\n2. `make deploy ENV=prod`',
+    triggers: ['how do I ship a release', 'deploy to prod'] },
+])
+const [skill] = await memory.skills.find('release the new build')
+```
+
+Skills are memories under the `skills/` tier, so `recall({ tiers: ['skills'] })`
+reaches them too, and `find_skill` is exported beside `recall_memory` and
+`save_memory` in every tool format.
 
 ## Multimodal
 

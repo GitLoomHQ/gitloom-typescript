@@ -199,7 +199,7 @@ describe('conversation', () => {
 
     // The turns the compaction summarized are readable again — nothing was
     // ever deleted, so this is an ordinary read rather than a recovery.
-    const contents = conv.messages().map((m) => m.content ?? '')
+    const contents = conv.messages().map((m) => (typeof m.content === 'string' ? m.content : ''))
     expect(contents.some((c) => c.startsWith('0:'))).toBe(true)
     expect(conv.branch).not.toBe('main')
   })
@@ -314,6 +314,30 @@ describe('usage-driven compaction', () => {
     expect(api.compactions.length).toBeGreaterThanOrEqual(1)
   })
 
+  it('counts an answer as one exchange however many tools it called', async () => {
+    const api = fakeApi()
+    const conv = await client(api.impl).conversations.create('c1', {
+      model: 'claude-sonnet-5', // a million-token window: tokens never trigger
+      compactEvery: 3,
+      summarize: async () => 'earlier chat, summarized',
+    })
+    // Two questions, each answered after a tool round. That is two exchanges,
+    // not four — the assistant turn carrying tool_calls is the middle of one.
+    for (let i = 0; i < 2; i++) {
+      await conv.append([
+        { role: 'user', content: `question ${i}` },
+        {
+          role: 'assistant',
+          content: '',
+          tool_calls: [{ id: `t${i}`, type: 'function', function: { name: 'recall', arguments: '{}' } }],
+        },
+        { role: 'tool', tool_call_id: `t${i}`, content: '{"hits":[]}' },
+        { role: 'assistant', content: `answer ${i}` },
+      ])
+    }
+    expect(api.compactions.length).toBe(0)
+  })
+
   it('uses reported provider usage instead of estimating', async () => {
     const api = fakeApi()
     const conv = await client(api.impl).conversations.create('c1', {
@@ -366,6 +390,55 @@ describe('edits', () => {
     expect(conv.branch).toBe('main')
     expect(api.messages[0]?.content).toBe('my key is [redacted]')
     expect(conv.messages()[0]?.content).toBe('my key is [redacted]')
+  })
+})
+
+describe('addressing messages', () => {
+  // edit/editInPlace/rewind all take a seq, so a caller that renders a
+  // conversation has to be able to learn one. These assert the number handed
+  // out is the number those methods accept — a mapping that is off by one is
+  // worse than no mapping, because it edits the wrong turn.
+  it('entries carry the seq the edit methods expect', async () => {
+    const api = fakeApi()
+    const conv = await client(api.impl).conversations.create('c1', { model: 'gpt-4o' })
+    await conv.append([
+      { role: 'user', content: 'first' },
+      { role: 'assistant', content: 'second' },
+      { role: 'user', content: 'third' },
+    ])
+
+    const entries = conv.entries()
+    expect(entries.map((e) => e.seq)).toEqual([0, 1, 2])
+
+    const third = entries.find((e) => e.content === 'third')
+    await conv.editInPlace(third!.seq, { content: 'third, corrected' })
+    expect(api.messages.find((m) => m.seq === third!.seq)?.content).toBe('third, corrected')
+  })
+
+  it('entries stay addressable after a compaction drops earlier turns', async () => {
+    const api = fakeApi()
+    const conv = await client(api.impl).conversations.create('c1', {
+      model: 'gpt-4o',
+      maxTokens: 120,
+      summarize: async () => 'they talked',
+    })
+    for (let i = 0; i < 6; i++) {
+      await conv.append([
+        { role: 'user', content: long(12) },
+        { role: 'assistant', content: long(12) },
+      ])
+    }
+    expect(conv.summary).not.toBeNull()
+
+    // The live turns now start partway in. Their seqs must reflect where they
+    // actually sit, not restart at zero, or an edit would hit an earlier turn.
+    const entries = conv.entries()
+    expect(entries[0]!.seq).toBe(conv.summary!.to + 1)
+    expect(entries.map((e) => e.seq)).toEqual(
+      entries.map((_, i) => entries[0]!.seq + i),
+    )
+    // The summary stands in for turns that are gone, so it is not addressable.
+    expect(entries.some((e) => e.role === 'system')).toBe(false)
   })
 })
 

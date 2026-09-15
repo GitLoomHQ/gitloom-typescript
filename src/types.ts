@@ -32,20 +32,61 @@ export interface RememberResult {
   status: 'accepted'
 }
 
-export interface RecallOptions {
+/** The four top-level directories a memory can live under. */
+export type Tier = 'facts' | 'incidents' | 'rules' | 'skills'
+
+/**
+ * How a recall answers.
+ *
+ * - `raw`: ranked memories, no model call. Milliseconds.
+ * - `summary`: the same memories, plus one text answer written by a fast model.
+ * - `agentic`: a stronger model searches the memory itself with tools and
+ *   answers when it has enough. Seconds, and metered as a chat.
+ */
+export type RecallMode = 'raw' | 'summary' | 'agentic'
+
+export interface RecallFilters {
+  /** Only these tiers. */
+  tiers?: Tier[] | undefined
+  /** Only memories under these directories, e.g. `['facts/events', 'incidents']`. */
+  paths?: string[] | undefined
+  /** Only memories carrying any of these tags. */
+  tags?: string[] | undefined
+  /** Only memories carrying every one of these tags. */
+  tagsAll?: string[] | undefined
+  /** Only memories updated on or after this date. */
+  since?: string | Date | undefined
+  /** Only memories updated on or before this date. */
+  until?: string | Date | undefined
+  /** Include TTL-expired incidents. Default false. */
+  includeExpired?: boolean | undefined
+}
+
+export interface RecallOptions extends RecallFilters {
   namespace?: string | undefined
   limit?: number | undefined
+  mode?: RecallMode | undefined
+  /** Drop memories scoring below this, in [0, 1]. */
+  minScore?: number | undefined
+  /**
+   * Whether graph neighbours ride along as context, ranked under the memories
+   * that matched. Default true.
+   */
+  context?: boolean | undefined
+  /** `full` adds each memory's recent history, last diff, relation snippets and cues. */
+  detail?: 'compact' | 'full' | undefined
   /** Abandon the request. An agent that drops a turn should drop its calls too. */
   signal?: AbortSignal | undefined
 }
 
-/** Why a hit surfaced: the fused rank broken into its retrieval arms. */
+/** Why a memory surfaced: its raw per-arm scores. */
 export interface HitScores {
   bm25?: number
   cue?: number
   body?: number
   graph_hops?: number
-  arms?: string[]
+  /** Fraction of the query's content terms present in the memory. */
+  coverage?: number
 }
 
 export interface Revision {
@@ -84,24 +125,139 @@ export interface VocabHit {
   matched?: string[]
 }
 
+/** One recalled memory: the whole memory, with everything needed to cite it. */
 export interface RecalledMemory {
-  id: string
-  text: string
-  /** Relative rank within this result set. Not comparable across queries. */
+  path: string
+  tier: string
+  topic?: string
+  title?: string
+  /** The whole memory body. */
+  content: string
+  /** A query-focused excerpt, when the lexical arm matched. */
+  snippet?: string
+  /**
+   * Calibrated relevance in [0, 1], comparable across queries. A memory that
+   * matches the question outright scores near 1; a graph neighbour a fraction
+   * of what pulled it in.
+   */
   score: number
-  /** Per-arm scores, provenance and relations arrive whenever the server has
-   * them. Optional because a hit is still an answer without its citations. */
+  /** Which arms produced it: lexical, cue, body, graph. */
+  matched: string[]
+  /** Section slugs that matched, when the match was narrower than the file. */
+  sections?: string[]
+  /** For a graph neighbour, the memories it was reached from. */
+  via?: string[]
+  tags?: string[]
+  created?: string
+  updated?: string
+  confidence?: number
+  cues?: string[]
   scores?: HitScores | undefined
+  related?: Relation[] | undefined
   provenance?: Provenance | undefined
-  relations?: Relation[] | undefined
+}
+
+/** One step of an agentic recall's trace. */
+export interface TraceEvent {
+  type: 'tool_use' | 'tool_result' | 'text'
+  tool?: string
+  id?: string
+  input?: unknown
+  result?: unknown
+  text?: string
+  millis?: number
+}
+
+export interface RecallTimings {
+  lexical_ms: number
+  vector_ms: number
+  graph_ms: number
+  model_ms?: number
 }
 
 export interface RecallResult {
   namespace: string
+  query: string
+  mode: RecallMode
+  /** Ranked memories, best first. Empty rather than absent when nothing matched. */
   memories: RecalledMemory[]
   /** Query terms that matched the namespace's custom vocabulary. */
   defined?: VocabHit[] | undefined
+  /** The model's text, in `summary` and `agentic` modes. */
+  answer?: string | undefined
+  model?: string | undefined
+  trace?: TraceEvent[] | undefined
+  /** The agent ran out of budget before choosing to stop. */
+  truncated?: boolean | undefined
+  /** Distinct memories any arm produced before the relevance floor. */
+  candidates: number
+  /** Candidates the relevance floor dropped. Many with no memories means an unanswerable question. */
+  filteredOut: number
   millis: number
+  timings: RecallTimings
+}
+
+export interface AnswerOptions extends Omit<RecallOptions, 'mode'> {
+  /** Let a tool-using model search the memory itself instead of summarizing one retrieval. */
+  agentic?: boolean | undefined
+}
+
+export interface AnswerResult {
+  answer: string
+  model?: string | undefined
+  memories: RecalledMemory[]
+  trace?: TraceEvent[] | undefined
+  truncated?: boolean | undefined
+  millis: number
+}
+
+/** A learned term: its canonical form, the surface forms that mean the same, and what it means. */
+export interface VocabTerm {
+  term: string
+  aliases?: string[] | undefined
+  definition?: string | undefined
+  path?: string | undefined
+}
+
+/** A skill as you store it. */
+export interface SkillInput {
+  name: string
+  description?: string | undefined
+  /** The procedure itself, as markdown. `##` headings become sections. */
+  content?: string | undefined
+  /** Files the skill under `skills/<topic>/`. */
+  topic?: string | undefined
+  /** Overrides the location entirely; must stay under `skills/`. */
+  path?: string | undefined
+  tags?: string[] | undefined
+  /** How someone would ask for this skill. Defaults to the name and description. */
+  triggers?: string[] | undefined
+  confidence?: number | undefined
+  date?: string | undefined
+}
+
+/** A skill as it comes back. */
+export interface Skill {
+  path: string
+  topic?: string
+  name: string
+  description?: string
+  content: string
+  tags?: string[]
+  triggers?: string[]
+  score?: number
+  matched?: string[]
+  created?: string
+  updated?: string
+}
+
+export interface SkillQueryOptions {
+  namespace?: string | undefined
+  limit?: number | undefined
+  /** Only skills under these topics, e.g. `['ops']`. */
+  paths?: string[] | undefined
+  tags?: string[] | undefined
+  signal?: AbortSignal | undefined
 }
 
 export interface KeyInfo {
