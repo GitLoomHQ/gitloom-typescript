@@ -1,13 +1,46 @@
 name: Tests
+
+# The SDK ships as a tarball rather than through the API, so a break here is
+# not something a redeploy fixes — it is a version people have already
+# installed.
 on:
-  push: { branches: [main] }
+  push:
+    branches: [main]
   pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
       - run: bun install
+      - run: bun run typecheck
+      - run: bun run test
       - run: bun run build
-      - run: bun test
+
+      # Both module systems are declared in package.json exports, so both must
+      # actually load. A broken CJS build is invisible to a suite that only
+      # ever imports ESM.
+      - name: Both entry points load
+        run: |
+          node -e "const m=require('./dist/index.cjs'); if(!m.Gitloom) throw new Error('no Gitloom in CJS')"
+          node --input-type=module -e "import('./dist/index.js').then(m=>{if(!m.Gitloom) throw new Error('no Gitloom in ESM')})"
+
+      # Zero runtime dependencies is a promise the README makes. Enforce it
+      # rather than trusting review to notice an added import.
+      - name: No runtime dependencies
+        run: |
+          deps=$(node -p "Object.keys(require('./package.json').dependencies||{}).join(' ')")
+          [ -z "$deps" ] || { echo "::error::SDK gained runtime dependencies: $deps"; exit 1; }

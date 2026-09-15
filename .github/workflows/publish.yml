@@ -1,0 +1,80 @@
+name: Publish
+
+# Publishing is irreversible: npm refuses to republish a version, and unpublish
+# is restricted after 72 hours. So this runs from a GitHub Release — a
+# deliberate act with a tag attached — rather than from every push to main.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+concurrency:
+  group: publish
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write # npm provenance; not an AWS credential
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    # Add required reviewers to this environment to gate a publish behind a
+    # human. Referencing it here is what makes that possible later.
+    environment: npm
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      # npm itself does the publishing; setup-node writes the .npmrc that
+      # NODE_AUTH_TOKEN is read through.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          registry-url: https://registry.npmjs.org
+
+      - run: bun install
+      - run: bun run typecheck
+      - run: bun run test
+      - run: bun run build
+
+      # A tag that disagrees with package.json publishes a version nobody
+      # asked for, under a name the release notes do not describe.
+      - name: Tag matches package.json
+        if: github.event_name == 'release'
+        run: |
+          tag="${{ github.event.release.tag_name }}"
+          pkg=$(node -p "require('./package.json').version")
+          [ "${tag#v}" = "$pkg" ] || {
+            echo "::error::release tag $tag does not match package.json version $pkg"; exit 1; }
+
+      # Refuses rather than fails halfway: npm rejects a duplicate version with
+      # a 403 that reads like an auth problem.
+      - name: Version is not already published
+        run: |
+          pkg=$(node -p "require('./package.json').version")
+          name=$(node -p "require('./package.json').name")
+          if npm view "$name@$pkg" version >/dev/null 2>&1; then
+            echo "::error::$name@$pkg is already on npm — bump the version"; exit 1
+          fi
+
+      # --provenance attaches a signed statement of which workflow and commit
+      # built the tarball, which is what id-token: write above is for.
+      - name: Publish
+        run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "### npm publish"
+            echo ""
+            echo "- package \`$(node -p "require('./package.json').name")@$(node -p "require('./package.json').version")\`"
+            echo "- commit \`${{ github.sha }}\`"
+            echo "- result: ${{ job.status }}"
+          } >> "$GITHUB_STEP_SUMMARY"
