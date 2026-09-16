@@ -395,3 +395,20 @@ describe('skills', () => {
     expect(url.searchParams.get('paths')).toBe('facts/events')
   })
 })
+
+describe('mcp tool annotations', () => {
+  // OpenAI's plugin review requires readOnlyHint, openWorldHint and
+  // destructiveHint on every tool, so a missing one fails a submission rather
+  // than anything a test would otherwise notice.
+  it('declares every hint a plugin submission requires', () => {
+    for (const tool of mcpTools) {
+      const a = tool.annotations as Record<string, boolean>
+      for (const hint of ['readOnlyHint', 'openWorldHint', 'destructiveHint']) {
+        expect(typeof a[hint], `${tool.name} is missing ${hint}`).toBe('boolean')
+      }
+      expect(a.openWorldHint, `${tool.name} reaches a hosted namespace`).toBe(true)
+      expect(a.destructiveHint, `${tool.name} never destroys history`).toBe(false)
+    }
+    expect(mcpTools.find((t) => t.name === 'save_memory')!.annotations.readOnlyHint).toBe(false)
+  })
+})

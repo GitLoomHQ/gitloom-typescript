@@ -83,24 +83,44 @@ const rememberParameters = {
  * same wording. A tool described one way to Claude Code and another way through
  * the SDK would behave differently for no reason anyone could see.
  */
+// openWorldHint is true on all three: every one reaches a hosted namespace
+// rather than anything in the caller's environment. destructiveHint is false on
+// save_memory even though ingestion reconciles a memory that restates an
+// existing one — the rewrite is a commit, so the previous version stays
+// readable in the memory's history.
 export const mcpTools = [
   {
     name: 'recall_memory',
     description: RECALL_DESCRIPTION,
     inputSchema: recallParameters,
-    annotations: { readOnlyHint: true, idempotentHint: true },
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
   },
   {
     name: 'save_memory',
     description: REMEMBER_DESCRIPTION,
     inputSchema: rememberParameters,
-    annotations: { readOnlyHint: false, idempotentHint: false },
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: true,
+    },
   },
   {
     name: 'find_skill',
     description: FIND_SKILL_DESCRIPTION,
     inputSchema: findSkillParameters,
-    annotations: { readOnlyHint: true, idempotentHint: true },
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
   },
 ] as const
 

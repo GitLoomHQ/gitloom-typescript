@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.9.2 — 2026-09-16
+
+- **`mcpTools` declares `openWorldHint` and `destructiveHint`.** OpenAI's
+  plugin review requires `readOnlyHint`, `openWorldHint` and `destructiveHint`
+  on every tool; only the first was set, so the tools could not be submitted as
+  part of a plugin. All three tools reach a hosted namespace rather than the
+  caller's machine (`openWorldHint: true`) and none destroys history, since a
+  reconciled memory keeps its previous version in git (`destructiveHint: false`).
+
 ## 0.9.1 — 2026-09-16
 
 - **`withMemory` declares the surface it returns.** It attached `.gitloom` at
