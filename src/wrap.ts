@@ -94,7 +94,10 @@ async function conversationFor(
  * Memory failures never fail the call. An agent that stops answering because
  * its memory is briefly unreachable is worse than one that answers without it.
  */
-export function withMemory<T extends object>(client: T, options: WrapOptions): T {
+export function withMemory<T extends object>(
+  client: T,
+  options: WrapOptions,
+): T & { gitloom: GitloomFeatures } {
   const onError =
     options.onError ??
     ((e: unknown) => console.warn('[gitloom] memory unavailable, continuing without it:', e))
@@ -133,7 +136,8 @@ export function withMemory<T extends object>(client: T, options: WrapOptions): T
         },
       })
     },
-  }) as T
+    // The proxy answers `gitloom` for any client, which no T can declare.
+  }) as T & { gitloom: GitloomFeatures }
 }
 
 function bind(value: unknown, thisArg: unknown): unknown {

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.9.1 — 2026-09-16
+
+- **`withMemory` declares the surface it returns.** It attached `.gitloom` at
+  runtime but typed its return as the client you passed in, so every
+  documented `openai.gitloom.conversation(…)` / `openai.gitloom.memory.recall(…)`
+  was a compile error. The return type is now `T & { gitloom: GitloomFeatures }`.
+  Strictly wider — nothing that compiled before stops compiling.
+
 ## 0.9.0 — 2026-09-15
 
 - **Recall returns memories, not fragments.** `recall()` now yields one entry per

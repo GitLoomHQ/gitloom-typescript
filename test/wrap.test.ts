@@ -296,8 +296,9 @@ describe('drop-in conversation mode', () => {
       conversation: 'conv-9',
     } as never)
 
-    const conv = await (openai as never as { gitloom: import('../src/wrap').GitloomFeatures })
-      .gitloom.conversation('conv-9')
+    // No cast: the wrapper's return type has to carry `gitloom`, or every
+    // documented `openai.gitloom.…` line fails to compile for a user.
+    const conv = await openai.gitloom.conversation('conv-9')
     await conv.setTitle('Named from the wrapper')
     expect(conv.id).toBe('conv-9')
     // Same object the wrapper appends through: its state reflects the call above.
