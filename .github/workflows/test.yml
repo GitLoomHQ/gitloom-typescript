@@ -44,3 +44,11 @@ jobs:
         run: |
           deps=$(node -p "Object.keys(require('./package.json').dependencies||{}).join(' ')")
           [ -z "$deps" ] || { echo "::error::SDK gained runtime dependencies: $deps"; exit 1; }
+
+      # docs/README.md is what GitBook Git-syncs into this SDK's documentation
+      # space. It is a copy, so a README change that skips it silently leaves
+      # the published docs describing an older API.
+      - name: GitBook copy matches the README
+        run: |
+          diff -u README.md docs/README.md \
+            || { echo "::error::run 'cp README.md docs/README.md' and commit it"; exit 1; }
