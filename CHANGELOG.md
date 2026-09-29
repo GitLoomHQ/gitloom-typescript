@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+- **`recall()` and `answer()` take `rank`, `maxChars` and `model`.** `rank:
+  'fused' | 'jev'` retrieves on the lane path, which also reaches conversation
+  turns and the dates in a question; `maxChars` caps the memory content
+  returned; `model: 'haiku' | 'sonnet'` picks the reader in `summary` or
+  `agentic` mode. None is sent unless set, so existing calls are unchanged.
+- **Lane-path fields.** Memories carry `store`, `said` and `excerpted`; the
+  result carries `rank` and `rankFallback`, and `timings` the lane path's
+  `embed_ms`, `lanes_ms`, `rank_ms` and per-lane `lane`.
+- **`runTool` takes `rank` and `maxChars`** for `recall_memory`, set by the
+  host, off by default. On the lane path each recalled memory is prefixed
+  with the days it was said.
+
 ## 0.9.2 — 2026-09-16
 
 - **`mcpTools` declares `openWorldHint` and `destructiveHint`.** OpenAI's

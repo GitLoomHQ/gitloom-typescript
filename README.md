@@ -89,6 +89,27 @@ console.log(agentic.answer, agentic.trace)
 `answer` is metered as a chat, not a read. `recall` with `mode: 'summary'` or
 `mode: 'agentic'` is the same thing with the memories and timings alongside.
 
+### The lane path
+
+`rank` retrieves on the lane path: lexical, cue, body, graph and time lanes each
+search on their own, over the curated memories and the conversation turns, and
+the time lane reads dates in the question ("last month", "in May"). `fused`
+orders what they find by lane score; `jev` has a ranking model order it, and
+sets `rankFallback` when it answers in lane order instead.
+
+```ts
+const { memories } = await memory.recall('when did I stake the tomatoes', { rank: 'fused', maxChars: 8000 })
+for (const m of memories) console.log(m.store, m.said, m.excerpted, m.content)
+
+const { answer } = await memory.answer('what did I plant after the storm', { rank: 'jev', model: 'sonnet' })
+```
+
+Each memory then says which `store` it came from (`memory`, or a word-for-word
+conversation `turn`) and the days it was `said`. `maxChars` caps the memory
+content returned: a memory that does not fit is cut to its opening sentence and
+the sentences matching the question, and marked `excerpted`. `model` picks the
+model that reads the memories in `summary` or `agentic` mode.
+
 ## Vocabulary and skills
 
 ```ts

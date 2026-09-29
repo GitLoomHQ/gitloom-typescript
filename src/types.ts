@@ -84,7 +84,7 @@ export interface RecallOptions extends RecallFilters {
   /**
    * Retrieve on the lane path, which also reaches conversation turns and the
    * dates in a question, ordering what it finds by lane score (`fused`) or with
-   * a ranking model (`jev`, metered as a chat). Not with `mode: 'agentic'`.
+   * a ranking model (`jev`). Not with `mode: 'agentic'`.
    */
   rank?: RecallRank | undefined
   /** The most characters of memory content to return; memories that do not fit come back `excerpted`. */
