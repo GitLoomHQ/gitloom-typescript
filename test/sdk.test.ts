@@ -294,6 +294,62 @@ describe('recall options', () => {
   })
 })
 
+describe('lane path', () => {
+  it('sends rank, max_chars and model, and reads what the lane path adds', async () => {
+    const { gl, calls } = client([
+      {
+        body: {
+          namespace: 'default', query: 'x', mode: 'summary', rank: 'jev', rank_fallback: true,
+          memories: [{
+            path: 'turns/conv-1/main/000001-user-aa.md', tier: 'facts', content: 'user: I staked the tomatoes …',
+            score: 0.8, matched: ['lexical', 'time'], store: 'turn', said: ['2026-05-21'], excerpted: true,
+          }],
+          candidates: 9, filtered_out: 0, millis: 40,
+          timings: { lexical_ms: 0, vector_ms: 0, graph_ms: 0, embed_ms: 20, lanes_ms: 8, rank_ms: 300,
+            lane: [{ lane: 'time', store: 'turn', ms: 2, n: 1 }] },
+        },
+      },
+    ])
+    const res = await gl.recall('x', { mode: 'summary', rank: 'jev', maxChars: 12000, model: 'sonnet' })
+    const url = new URL(calls[0]!.url)
+    expect([url.searchParams.get('rank'), url.searchParams.get('max_chars'), url.searchParams.get('model')])
+      .toEqual(['jev', '12000', 'sonnet'])
+    expect(res.rank).toBe('jev')
+    expect(res.rankFallback).toBe(true)
+    const m = res.memories[0]!
+    expect([m.store, m.said, m.excerpted]).toEqual(['turn', ['2026-05-21'], true])
+    expect(res.timings.lane?.[0]?.lane).toBe('time')
+  })
+
+  it('leaves the envelope as it was without rank', async () => {
+    const { gl } = client([{ body: { namespace: 'default', memories: [], millis: 1 } }])
+    const res = await gl.recall('x')
+    expect('rank' in res).toBe(false)
+    expect('rankFallback' in res).toBe(false)
+  })
+
+  it('passes rank through answer', async () => {
+    const { gl, calls } = client([{ body: { namespace: 'default', memories: [], answer: 'A.', millis: 1 } }])
+    await gl.answer('x', { rank: 'fused', model: 'haiku' })
+    const url = new URL(calls[0]!.url)
+    expect([url.searchParams.get('mode'), url.searchParams.get('rank'), url.searchParams.get('model')])
+      .toEqual(['summary', 'fused', 'haiku'])
+  })
+
+  it('lets a host recall on the lane path and shows when each memory was said', async () => {
+    const { gl, calls } = client([
+      { body: { namespace: 'default', memories: [{ path: 'facts/a.md', tier: 'facts', content: 'A.', score: 1, matched: ['time'], said: ['2026-05-20', '2026-05-25'] }], millis: 1 } },
+      { body: { namespace: 'default', memories: [{ path: 'facts/a.md', tier: 'facts', content: 'A.', score: 1, matched: ['lexical'] }], millis: 1 } },
+    ])
+    const out = await runTool(gl, { name: 'recall_memory', arguments: { query: 'x' } }, { rank: 'fused', maxChars: 8000 })
+    const url = new URL(calls[0]!.url)
+    expect([url.searchParams.get('rank'), url.searchParams.get('max_chars')]).toEqual(['fused', '8000'])
+    expect(out).toBe('- (said 2026-05-20, 2026-05-25) A.')
+    expect(await runTool(gl, { name: 'recall_memory', arguments: { query: 'x' } })).toBe('- A.')
+    expect(new URL(calls[1]!.url).searchParams.has('rank')).toBe(false)
+  })
+})
+
 describe('answer', () => {
   it('asks for a summary and returns the text with its evidence', async () => {
     const { gl, calls } = client([

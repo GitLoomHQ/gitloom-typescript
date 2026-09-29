@@ -62,6 +62,12 @@ export interface RecallFilters {
   includeExpired?: boolean | undefined
 }
 
+/** How the lane path orders what it finds: by lane score, or with a ranking model. */
+export type RecallRank = 'fused' | 'jev'
+
+/** A model that can read the memories in `summary` or `agentic` mode. */
+export type ReaderModel = 'haiku' | 'sonnet'
+
 export interface RecallOptions extends RecallFilters {
   namespace?: string | undefined
   limit?: number | undefined
@@ -75,6 +81,16 @@ export interface RecallOptions extends RecallFilters {
   context?: boolean | undefined
   /** `full` adds each memory's recent history, last diff, relation snippets and cues. */
   detail?: 'compact' | 'full' | undefined
+  /**
+   * Retrieve on the lane path, which also reaches conversation turns and the
+   * dates in a question, ordering what it finds by lane score (`fused`) or with
+   * a ranking model (`jev`, metered as a chat). Not with `mode: 'agentic'`.
+   */
+  rank?: RecallRank | undefined
+  /** The most characters of memory content to return; memories that do not fit come back `excerpted`. */
+  maxChars?: number | undefined
+  /** The model that reads the memories in `summary` or `agentic` mode. */
+  model?: ReaderModel | undefined
   /** Abandon the request. An agent that drops a turn should drop its calls too. */
   signal?: AbortSignal | undefined
 }
@@ -141,8 +157,14 @@ export interface RecalledMemory {
    * of what pulled it in.
    */
   score: number
-  /** Which arms produced it: lexical, cue, body, graph. */
+  /** Which arms produced it: lexical, cue, body, graph; on the lane path, also time. */
   matched: string[]
+  /** `content` was cut to fit `maxChars`. */
+  excerpted?: boolean
+  /** Lane path: a curated `memory`, or a conversation `turn` kept word for word. */
+  store?: 'memory' | 'turn'
+  /** Lane path: the days it was stated, oldest first. */
+  said?: string[]
   /** Section slugs that matched, when the match was narrower than the file. */
   sections?: string[]
   /** For a graph neighbour, the memories it was reached from. */
@@ -173,6 +195,19 @@ export interface RecallTimings {
   vector_ms: number
   graph_ms: number
   model_ms?: number
+  /** Lane path: the query embedding, every lane, the ranking call, and each lane on each store. */
+  embed_ms?: number
+  lanes_ms?: number
+  rank_ms?: number
+  lane?: LaneTiming[]
+}
+
+export interface LaneTiming {
+  lane: string
+  store: 'memory' | 'turn'
+  ms: number
+  n: number
+  err?: string
 }
 
 export interface RecallResult {
@@ -189,6 +224,10 @@ export interface RecallResult {
   trace?: TraceEvent[] | undefined
   /** The agent ran out of budget before choosing to stop. */
   truncated?: boolean | undefined
+  /** The lane ranking asked for. */
+  rank?: RecallRank | undefined
+  /** `rank: 'jev'` could not rank, so the memories are in lane order. */
+  rankFallback?: boolean | undefined
   /** Distinct memories any arm produced before the relevance floor. */
   candidates: number
   /** Candidates the relevance floor dropped. Many with no memories means an unanswerable question. */

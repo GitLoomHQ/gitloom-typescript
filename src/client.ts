@@ -187,7 +187,12 @@ export class Gitloom {
     if (options.context === false) params.set('context', '0')
     if (options.detail === 'full') params.set('detail', 'full')
     if (options.includeExpired) params.set('include_expired', '1')
-    const res = await this.request<Partial<RecallResult> & { memories?: RecalledMemory[] | null }>(
+    if (options.rank) params.set('rank', options.rank)
+    if (options.maxChars) params.set('max_chars', String(options.maxChars))
+    if (options.model) params.set('model', options.model)
+    const res = await this.request<
+      Partial<RecallResult> & { memories?: RecalledMemory[] | null; rank_fallback?: boolean }
+    >(
       'GET',
       `/v1/retrieve?${params.toString()}`,
       undefined,
@@ -203,6 +208,8 @@ export class Gitloom {
       ...(res.model ? { model: res.model } : {}),
       ...(res.trace ? { trace: res.trace } : {}),
       ...(res.truncated ? { truncated: res.truncated } : {}),
+      ...(res.rank ? { rank: res.rank } : {}),
+      ...(res.rank_fallback ? { rankFallback: true } : {}),
       candidates: res.candidates ?? res.memories?.length ?? 0,
       filteredOut: res.filteredOut ?? (res as { filtered_out?: number }).filtered_out ?? 0,
       millis: res.millis ?? 0,

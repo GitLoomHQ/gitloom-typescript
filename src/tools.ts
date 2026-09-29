@@ -8,7 +8,7 @@
  */
 
 import type { Gitloom } from './client'
-import type { Tier } from './types'
+import type { RecallRank, Tier } from './types'
 
 const RECALL_DESCRIPTION =
   'Search what you already know about this user from earlier conversations. ' +
@@ -174,7 +174,13 @@ export interface ToolCall {
 export async function runTool(
   client: Gitloom,
   call: ToolCall,
-  options: { namespace?: string | undefined } = {},
+  options: {
+    namespace?: string | undefined
+    /** Recall on the lane path, ordered this way. Off by default. */
+    rank?: RecallRank | undefined
+    /** The most characters of memory content a recall hands back. */
+    maxChars?: number | undefined
+  } = {},
 ): Promise<string> {
   try {
     switch (call.name) {
@@ -185,9 +191,13 @@ export async function runTool(
           namespace: options.namespace,
           tiers: stringList(call.arguments.tiers) as Tier[],
           paths: stringList(call.arguments.paths),
+          rank: options.rank,
+          maxChars: options.maxChars,
         })
         if (memories.length === 0) return 'Nothing relevant is stored about this user yet.'
-        return memories.map((m) => `- ${m.content}`).join('\n')
+        return memories
+          .map((m) => (m.said?.length ? `- (said ${m.said.join(', ')}) ${m.content}` : `- ${m.content}`))
+          .join('\n')
       }
       case 'find_skill': {
         const task = String(call.arguments.task ?? '')
