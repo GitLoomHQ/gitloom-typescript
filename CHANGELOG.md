@@ -25,6 +25,13 @@
   `updatedAt`, `occurredAt` and `expiresAt` as `Date`s, with
   `occurredSource` and `occurredPrecision`. `created` and `updated` remain,
   deprecated.
+- **The agent tools speak the same contract.** `recall_memory` takes `tags`,
+  `since`, `until` and `time_field` (default `occurred` under a range), and
+  `query` is no longer required: with only filters, `runTool` lists what they
+  match, without the host's `rank` or `maxChars`. Each memory line starts with
+  the UTC day it happened (`- [2023-05-29] …`); ingestion times are never
+  shown. `save_memory` takes `tags` and `occurred_at`, and a refused tag or
+  date comes back as text naming it.
 - **`recall()` and `answer()` take `rank`, `maxChars` and `model`.** `rank:
   'fused' | 'jev'` retrieves on the lane path, which also reaches conversation
   turns and the dates in a question; `maxChars` caps the memory content

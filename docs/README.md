@@ -200,6 +200,11 @@ Skills are memories under the `skills/` tier, so `recall({ tiers: ['skills'] })`
 reaches them too, and `find_skill` is exported beside `recall_memory` and
 `save_memory` in every tool format.
 
+In those tools, `recall_memory` takes `tags`, `since`, `until` and `time_field`
+(default `occurred`), and lists by filter when the model leaves out `query`;
+each memory it hands back starts with the day it happened, e.g.
+`- [2023-05-29] …`. `save_memory` takes `tags` and `occurred_at`.
+
 ## Multimodal
 
 ```ts
