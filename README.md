@@ -225,7 +225,8 @@ await openai.chat.completions.create({
 ## Errors
 
 Every failure is a `GitloomError` with a stable `code`, the HTTP `status` (0
-when no response came back), and a readable `message`.
+when no response came back), and a readable `message`. No error, and nothing
+logged from the client, ever carries the API key.
 
 ```ts
 import { GitloomError } from '@gitloomhq/sdk'
@@ -234,18 +235,23 @@ try {
   await memory.recall('what camera do I own')
 } catch (e) {
   if (!(e instanceof GitloomError)) throw e
-  if (e.code === 'unauthorized') { /* missing, wrong or revoked key */ }
-  else if (e.isRateLimited) { /* too many requests this minute; clears on its own */ }
+  if (e.code === 'unauthorized') { /* wrong or revoked key */ }
+  else if (e.isRateLimited) { /* too many requests; e.retryAfter is the seconds to wait, when known */ }
   else if (e.isQuotaExceeded) { /* the plan's monthly allowance is used */ }
   else if (e.isBalanceExhausted) { /* the prepaid wallet is empty */ }
+  else if (e.code === 'timeout' || e.code === 'network_error') { /* no answer came back */ }
   else console.error(e.code, e.status, e.message)
 }
 ```
 
-The API's own codes come through unchanged (`invalid_tag`,
-`namespace_not_found`, `forbidden_namespace`, …). Anything else is
-`http_<status>` with whatever the response said. 5xx responses, timeouts and
-network errors are retried on reads; a 4xx never is.
+`new Gitloom()` itself throws `missing_api_key` when no key is given or
+`GITLOOM_API_KEY` is unset or blank, and `invalid_api_key` when the key holds
+whitespace or control characters; surrounding whitespace is trimmed first.
+Neither waits for a request. The API's own codes come through unchanged
+(`invalid_tag`, `namespace_not_found`, `forbidden_namespace`, …); a key the
+gateway refuses is `unauthorized`; anything else is `http_<status>` with
+whatever the response said. 5xx responses, timeouts and network errors are
+retried on reads; a 4xx, a 429 included, never is.
 
 ## Docs
 

@@ -2,6 +2,27 @@
 
 ## 0.10.0 — unreleased
 
+**Breaking**
+
+- `isQuotaExceeded` is true only for code `quota_exceeded`, no longer for every
+  429; a per-minute limit is `isRateLimited`.
+- A key the API Gateway refuses (401/403 with no error envelope) is code
+  `unauthorized`, where it was `http_401` / `http_403`.
+- A blank or whitespace-only key counts as missing: `new Gitloom()` throws
+  `missing_api_key` at construction, before any request, where a blank key
+  used to be sent. A key with whitespace or control characters inside throws
+  `invalid_api_key`, also at construction; surrounding whitespace is trimmed.
+- A `network_error`'s `cause` is a copy of the transport error (name, code,
+  message, and its own causes), not the original object, so nothing it stored
+  can carry the key. The key is a private field and no longer readable off
+  the client.
+- `RecalledMemory.tags` and `userTags` are always arrays, `[]` when there are
+  none, where they could be absent.
+- `since` and `until` given as a `Date` are sent as epoch seconds rather than
+  RFC 3339.
+
+**Added**
+
 - **Direct memory primitives**, at parity with the Go SDK: `write(memories)`
   stores already-formed memories as given; `get(path)` reads one back (a file
   or `file.md#section`); `forget(paths)` deletes; `tree()`, `topics()` and
@@ -37,17 +58,20 @@
   `occurredSource` and `occurredPrecision`. `tags` and `userTags` are `[]`
   rather than null on an untagged memory.
 - **Errors without the API's envelope read clearly.** The gateway's own 401
-  and 403 (`{"message":…}`, no code) become code `unauthorized` with a message
-  saying what to check; an enveloped 403 such as `forbidden_namespace` keeps
-  its code. Any other bare error is `http_<status>`, and its message is the
-  body's `message`, else its text (no longer thrown away), else the status
-  text. A JSON body that is not an object no longer matters.
-- **`isQuotaExceeded` is true only for `quota_exceeded`.** It was true for any
-  429, so a per-minute rate limit read as the monthly quota. New:
-  `isRateLimited` (`rate_limited`) and `isBalanceExhausted`
-  (`balance_exhausted`). Code that treated every 429 as the quota should check
-  `isRateLimited` too.
-- **Tool failures name their code**: `The memory service failed (<code>): …`.
+  and 403 (`{"message":…}`, no code) say which key to check; an enveloped 403
+  such as `forbidden_namespace` keeps its code. Any other bare error is
+  `http_<status>`, and its message is the body's `message`, else its text (no
+  longer thrown away), else the status text. New: `isRateLimited`
+  (`rate_limited`) and `isBalanceExhausted` (`balance_exhausted`).
+- **Error bodies:** a legacy flat `{"error":"…"}` reads that text as the
+  message; an empty, blank or JSON `null` body reads the status text; other
+  non-object JSON reads as its text. A 429's integer `Retry-After` is
+  `retryAfter` on the error; nothing retries on it.
+- **Times read the same everywhere**: `get()` and `recall()` share
+  `MemoryTimes`, and a time sent as an RFC 3339 string reads into the same
+  `Date` as unix seconds.
+- **Tool failures name their code**: `The memory service failed (<code>): …`,
+  with `(retry after <n>s)` when a rate limit said how long.
   `runToolResult()` returns `{ text, isError }`, with `isError` set on every
   failure, a refusal or a missing input included; `runTool()` returns the same
   text as before.
