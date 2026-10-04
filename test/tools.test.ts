@@ -33,13 +33,14 @@ function schemas(name: string) {
     mcpTools.find((t) => t.name === name)!.inputSchema,
     openaiTools.find((t) => t.function.name === name)!.function.parameters,
     anthropicTools.find((t) => t.name === name)!.input_schema,
-  ] as Array<{ properties: Record<string, { type: string; enum?: readonly string[] }>; required: readonly string[]; additionalProperties: boolean }>
+  ] as Array<{ properties: Record<string, { type: string; enum?: readonly string[] }>; required?: readonly string[]; additionalProperties: boolean }>
 }
 
 describe('tool schemas', () => {
   it('lets recall_memory filter by tags and time without a query, in every host shape', () => {
     for (const s of schemas('recall_memory')) {
-      expect(s.required).toEqual([])
+      // Draft-04 validators refuse an empty required list, so it is left out.
+      expect(s).not.toHaveProperty('required')
       expect(s.additionalProperties).toBe(false)
       expect(s.properties.tags!.type).toBe('array')
       expect(s.properties.since!.type).toBe('string')

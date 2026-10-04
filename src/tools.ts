@@ -70,7 +70,6 @@ const recallParameters = {
       description: 'Optional: only memories under these directories, e.g. "facts/events".',
     },
   },
-  required: [],
   additionalProperties: false,
 } as const
 
