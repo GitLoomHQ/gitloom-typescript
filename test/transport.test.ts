@@ -91,14 +91,14 @@ describe('retries', () => {
     expect(calls.length).toBe(2)
   })
 
-  it('surfaces a network failure as a GitloomError carrying the cause', async () => {
+  it('surfaces a network failure as a GitloomError carrying a copy of the cause', async () => {
     const boom = new TypeError('fetch failed')
     const { impl } = fetchStub(() => Promise.reject(boom))
     const g = client(impl)
     const err = await g.recall('x').catch((e) => e)
     expect(err).toBeInstanceOf(GitloomError)
     expect(err.code).toBe('network_error')
-    expect(err.cause).toBe(boom)
+    expect(err.cause).toMatchObject({ name: 'TypeError', message: 'fetch failed' })
   })
 
   it('does not retry a write, so one save cannot become three', async () => {
@@ -237,4 +237,73 @@ it('recall passes scores, provenance and relations through', async () => {
   expect(m.provenance?.diff).toContain('diff --git')
   expect(m.related?.[0]?.snippet).toBe('B.')
   expect(res.defined?.[0]?.term).toBe('RRF')
+})
+
+describe('error contract', () => {
+  const fail = async (res: Response) => {
+    const { impl, calls } = fetchStub(res)
+    const err = await client(impl).recall('x').catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(GitloomError)
+    return { err: err as GitloomError, calls }
+  }
+
+  it('keeps an enveloped code and message as they are', async () => {
+    const { err } = await fail(json({ error: { code: 'forbidden_namespace', message: 'this key is scoped to another namespace' } }, 403))
+    expect([err.code, err.message, err.status]).toEqual(['forbidden_namespace', 'this key is scoped to another namespace', 403])
+  })
+
+  // The API Gateway answers a missing or bad key itself, without the envelope.
+  it('names a gateway 403 as an unaccepted key', async () => {
+    const { err, calls } = await fail(json({ message: 'Forbidden' }, 403))
+    expect(err.code).toBe('unauthorized')
+    expect(err.message).toBe(
+      'The API key was not accepted (403 Forbidden) — check the API key (GITLOOM_API_KEY, or the key passed to the client), or whether it has been revoked.',
+    )
+    expect(calls).toHaveLength(1)
+  })
+
+  it('names a gateway 401 as a missing key', async () => {
+    const { err } = await fail(json({ message: 'Unauthorized' }, 401))
+    expect(err.code).toBe('unauthorized')
+    expect(err.message).toBe(
+      'No API key was accepted (401 Unauthorized) — check the API key (GITLOOM_API_KEY, or the key passed to the client).',
+    )
+  })
+
+  it('keeps a plain-text body as the message', async () => {
+    const { err } = await fail(new Response('  upstream connect error  ', { status: 500 }))
+    expect([err.code, err.message]).toEqual(['http_500', 'upstream connect error'])
+  })
+
+  it('uses a bare JSON message when there is one', async () => {
+    const { err } = await fail(json({ message: 'Endpoint request timed out' }, 504))
+    expect([err.code, err.message]).toEqual(['http_504', 'Endpoint request timed out'])
+  })
+
+  it('reads JSON that is not an object as text, and never crashes on it', async () => {
+    expect((await fail(new Response('[1,2]', { status: 500 }))).err).toMatchObject({ code: 'http_500', message: '[1,2]' })
+    expect((await fail(new Response('"oops"', { status: 500 }))).err).toMatchObject({ code: 'http_500', message: '"oops"' })
+    expect((await fail(new Response('42', { status: 500 }))).err).toMatchObject({ code: 'http_500', message: '42' })
+  })
+
+  it('falls back to the status text for an empty, blank or null body, and caps a long one', async () => {
+    expect((await fail(new Response('', { status: 502, statusText: 'Bad Gateway' }))).err.message).toBe('Bad Gateway')
+    expect((await fail(new Response('  \n ', { status: 502, statusText: 'Bad Gateway' }))).err.message).toBe('Bad Gateway')
+    expect((await fail(new Response('null', { status: 500, statusText: 'Internal Server Error' }))).err)
+      .toMatchObject({ code: 'http_500', message: 'Internal Server Error' })
+    expect((await fail(new Response('', { status: 502 }))).err.message).toBe('Request failed with 502')
+    const long = (await fail(new Response('x'.repeat(1000), { status: 500 }))).err.message
+    expect(long).toBe(`${'x'.repeat(300)}…`)
+  })
+
+  // A per-minute rate limit clears in seconds; the monthly quota does not.
+  it('tells the quota, the rate limit and an empty wallet apart', async () => {
+    const quota = (await fail(json({ error: { code: 'quota_exceeded', message: 'monthly reads used' } }, 429))).err
+    const rate = (await fail(json({ error: { code: 'rate_limited', message: 'slow down' } }, 429))).err
+    const wallet = (await fail(json({ error: { code: 'balance_exhausted', message: 'recharge' } }, 402))).err
+    expect([quota.isQuotaExceeded, quota.isRateLimited, quota.isBalanceExhausted]).toEqual([true, false, false])
+    expect([rate.isQuotaExceeded, rate.isRateLimited, rate.isBalanceExhausted]).toEqual([false, true, false])
+    expect([wallet.isQuotaExceeded, wallet.isRateLimited, wallet.isBalanceExhausted]).toEqual([false, false, true])
+    expect((await fail(new Response('', { status: 429 }))).err.isQuotaExceeded).toBe(false)
+  })
 })

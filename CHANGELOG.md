@@ -1,5 +1,92 @@
 # Changelog
 
+## 0.10.0 — 2026-10-04
+
+**Breaking**
+
+- `isQuotaExceeded` is true only for code `quota_exceeded`, no longer for every
+  429; a per-minute limit is `isRateLimited`.
+- A key the API Gateway refuses (401/403 with no error envelope) is code
+  `unauthorized`, where it was `http_401` / `http_403`.
+- A blank or whitespace-only key counts as missing: `new Gitloom()` throws
+  `missing_api_key` at construction, before any request, where a blank key
+  used to be sent. A key with whitespace or control characters inside throws
+  `invalid_api_key`, also at construction; surrounding whitespace is trimmed.
+- A `network_error`'s `cause` is a copy of the transport error (name, code,
+  message, and its own causes), not the original object, so nothing it stored
+  can carry the key. The key is a private field and no longer readable off
+  the client.
+- `RecalledMemory.tags` and `userTags` are always arrays, `[]` when there are
+  none, where they could be absent.
+- `since` and `until` given as a `Date` are sent as epoch seconds rather than
+  RFC 3339.
+
+**Added**
+
+- **Direct memory primitives**, at parity with the Go SDK: `write(memories)`
+  stores already-formed memories as given; `get(path)` reads one back (a file
+  or `file.md#section`); `forget(paths)` deletes; `tree()`, `topics()` and
+  `graph()` show what the namespace holds. `write` refuses a path not ending
+  in `.md` before sending, and `write([])` / `forget([])` send nothing.
+- **Tags and when it happened, on writes.** `remember()` takes `tags` (on every
+  memory drawn from the conversation), `occurredAt` and `timezone`; each
+  `write()` memory takes `tags` and `occurredAt`, and `write()` a `timezone`.
+  `occurredAt` is a `Date` (sent as epoch seconds), epoch seconds, or a string
+  sent as is. `date` still works and is deprecated.
+- **Time filters on `recall()`, `answer()` and `context()`**: `since` and
+  `until` take a `Date`, epoch seconds or a string; `timeField` picks which
+  time they bound (`occurred`, `created` or `updated`, the default); `tz` reads
+  dates and offset-less times in a zone. A `Date` is now sent as epoch seconds
+  rather than RFC 3339.
+- **Recall without a query.** `recall({ tags: [...] })` (or `recall(undefined,
+  {...})`, or `context({...})`) lists every memory the filters match, newest
+  first, each scored 1. With neither a query nor a filter, it throws
+  `missing_query` before sending a request.
+- **Times on recalled memories.** Each carries `userTags`, and `createdAt`,
+  `updatedAt`, `occurredAt` and `expiresAt` as `Date`s, with
+  `occurredSource` and `occurredPrecision`. `created` and `updated` remain,
+  deprecated.
+- **The agent tools speak the same contract.** `recall_memory` takes `tags`,
+  `since`, `until` and `time_field` (default `occurred` under a range), and
+  `query` is no longer required: with only filters, `runTool` lists what they
+  match, without the host's `rank` or `maxChars`. Each memory line starts with
+  the UTC day it happened (`- [2023-05-29] …`); ingestion times are never
+  shown. `save_memory` takes `tags` and `occurred_at`, and a refused tag or
+  date comes back as text naming it.
+- **`get()` carries tags and times too**: `userTags`, and `createdAt`,
+  `updatedAt`, `occurredAt` and `expiresAt` as `Date`s, with
+  `occurredSource` and `occurredPrecision`. `tags` and `userTags` are `[]`
+  rather than null on an untagged memory.
+- **Errors without the API's envelope read clearly.** The gateway's own 401
+  and 403 (`{"message":…}`, no code) say which key to check; an enveloped 403
+  such as `forbidden_namespace` keeps its code. Any other bare error is
+  `http_<status>`, and its message is the body's `message`, else its text (no
+  longer thrown away), else the status text. New: `isRateLimited`
+  (`rate_limited`) and `isBalanceExhausted` (`balance_exhausted`).
+- **Error bodies:** a legacy flat `{"error":"…"}` reads that text as the
+  message, except on a 401 or 403, which is always `unauthorized`; an empty, blank or JSON `null` body reads the status text; other
+  non-object JSON reads as its text. A 429's integer `Retry-After` is
+  `retryAfter` on the error; nothing retries on it.
+- **Times read the same everywhere**: `get()` and `recall()` share
+  `MemoryTimes`, and a time sent as an RFC 3339 string reads into the same
+  `Date` as unix seconds.
+- **Tool failures name their code**: `The memory service failed (<code>): …`,
+  with `(retry after <n>s)` when a rate limit said how long.
+  `runToolResult()` returns `{ text, isError }`, with `isError` set on every
+  failure, a refusal or a missing input included; `runTool()` returns the same
+  text as before.
+- **`recall()` and `answer()` take `rank`, `maxChars` and `model`.** `rank:
+  'fused' | 'jev'` retrieves on the lane path, which also reaches conversation
+  turns and the dates in a question; `maxChars` caps the memory content
+  returned; `model: 'haiku' | 'sonnet'` picks the reader in `summary` or
+  `agentic` mode. None is sent unless set, so existing calls are unchanged.
+- **Lane-path fields.** Memories carry `store`, `said` and `excerpted`; the
+  result carries `rank` and `rankFallback`, and `timings` the lane path's
+  `embed_ms`, `lanes_ms`, `rank_ms` and per-lane `lane`.
+- **`runTool` takes `rank` and `maxChars`** for `recall_memory`, set by the
+  host, off by default. On the lane path each recalled memory is prefixed
+  with the days it was said.
+
 ## 0.9.2 — 2026-09-16
 
 - **`mcpTools` declares `openWorldHint` and `destructiveHint`.** OpenAI's

@@ -8,7 +8,8 @@
  */
 
 import type { Gitloom } from './client'
-import type { Tier } from './types'
+import { GitloomError } from './errors'
+import type { RecallRank, RecalledMemory, Tier, TimeField } from './types'
 
 const RECALL_DESCRIPTION =
   'Search what you already know about this user from earlier conversations. ' +
@@ -30,7 +31,31 @@ const recallParameters = {
   properties: {
     query: {
       type: 'string',
-      description: 'What you want to know, phrased as a question in the user\'s own terms.',
+      description:
+        'What you want to know, phrased as a question in the user\'s own terms. Leave it out only ' +
+        'when tags, since, until, tiers or paths are given, to list everything they match, newest first.',
+    },
+    tags: {
+      type: 'array',
+      items: { type: 'string' },
+      description: 'Optional: only memories carrying any of these tags.',
+    },
+    since: {
+      type: 'string',
+      description: 'Optional: only memories from this time on. A date YYYY-MM-DD or an RFC 3339 time.',
+    },
+    until: {
+      type: 'string',
+      description:
+        'Optional: only memories up to this time. A date YYYY-MM-DD, which includes that whole day, ' +
+        'or an RFC 3339 time.',
+    },
+    time_field: {
+      type: 'string',
+      enum: ['occurred', 'created', 'updated'],
+      description:
+        'Optional: which time since and until bound. occurred (the default) is when the thing ' +
+        'happened; created and updated are when the memory was written or last changed.',
     },
     tiers: {
       type: 'array',
@@ -45,7 +70,6 @@ const recallParameters = {
       description: 'Optional: only memories under these directories, e.g. "facts/events".',
     },
   },
-  required: ['query'],
   additionalProperties: false,
 } as const
 
@@ -69,6 +93,19 @@ const rememberParameters = {
       description:
         'The thing to remember, as one self-contained sentence including any specifics ' +
         '(names, numbers, dates). It will be read months later with no surrounding conversation.',
+    },
+    tags: {
+      type: 'array',
+      items: { type: 'string' },
+      description:
+        'Optional: short labels to file it under, such as a project or a person. Lowercased; ' +
+        'letters, digits, spaces and - _ . : / # @ only.',
+    },
+    occurred_at: {
+      type: 'string',
+      description:
+        'When what this fact describes happened, if the user said: a date YYYY-MM-DD or an ' +
+        'RFC 3339 time. Leave it out for timeless facts.',
     },
   },
   required: ['fact'],
@@ -164,6 +201,20 @@ export interface ToolCall {
   arguments: Record<string, unknown>
 }
 
+export interface RunToolOptions {
+  namespace?: string | undefined
+  /** Recall on the lane path, ordered this way. Off by default. */
+  rank?: RecallRank | undefined
+  /** The most characters of memory content a recall hands back. */
+  maxChars?: number | undefined
+}
+
+/** What a tool call produced, and whether it failed — MCP's `isError`. */
+export interface ToolResult {
+  text: string
+  isError: boolean
+}
+
 /**
  * Runs a tool call the model made and returns the string to hand back.
  *
@@ -174,44 +225,92 @@ export interface ToolCall {
 export async function runTool(
   client: Gitloom,
   call: ToolCall,
-  options: { namespace?: string | undefined } = {},
+  options: RunToolOptions = {},
 ): Promise<string> {
+  return (await runToolResult(client, call, options)).text
+}
+
+/** `runTool`, also saying whether the call failed, for hosts that mark a failed tool result. */
+export async function runToolResult(
+  client: Gitloom,
+  call: ToolCall,
+  options: RunToolOptions = {},
+): Promise<ToolResult> {
+  const ok = (text: string): ToolResult => ({ text, isError: false })
+  const fail = (text: string): ToolResult => ({ text, isError: true })
   try {
     switch (call.name) {
       case 'recall_memory': {
-        const query = String(call.arguments.query ?? '')
-        if (!query) return 'No query was provided.'
-        const { memories } = await client.recall(query, {
+        const query = stringArg(call.arguments.query)
+        const filters = {
           namespace: options.namespace,
-          tiers: stringList(call.arguments.tiers) as Tier[],
+          tiers: stringList(call.arguments.tiers) as Tier[] | undefined,
           paths: stringList(call.arguments.paths),
-        })
-        if (memories.length === 0) return 'Nothing relevant is stored about this user yet.'
-        return memories.map((m) => `- ${m.content}`).join('\n')
+          tags: stringList(call.arguments.tags),
+          since: stringArg(call.arguments.since),
+          until: stringArg(call.arguments.until),
+          timeField: timeFieldArg(call.arguments.time_field),
+        }
+        if (filters.since || filters.until) filters.timeField ??= 'occurred'
+        const listing =
+          filters.tiers || filters.paths || filters.tags || filters.since || filters.until
+        if (!query && !listing) return fail('No query or filter was provided.')
+        // A list without a question has nothing to rank, so the host's rank stays off it.
+        const { memories } = query
+          ? await client.recall(query, { ...filters, rank: options.rank, maxChars: options.maxChars })
+          : await client.recall(filters)
+        if (memories.length === 0) {
+          return ok(query ? 'Nothing relevant is stored about this user yet.' : 'No memory matches these filters.')
+        }
+        return ok(memories.map(memoryLine).join('\n'))
       }
       case 'find_skill': {
         const task = String(call.arguments.task ?? '')
-        if (!task) return 'No task was provided.'
+        if (!task) return fail('No task was provided.')
         const skills = await client.skills.find(task, { namespace: options.namespace, limit: 3 })
-        if (skills.length === 0) return 'No stored skill applies to this task.'
-        return skills
-          .map((s) => `## ${s.name}\n${s.description ? s.description + '\n' : ''}${s.content}`)
-          .join('\n\n')
+        if (skills.length === 0) return ok('No stored skill applies to this task.')
+        return ok(
+          skills
+            .map((s) => `## ${s.name}\n${s.description ? s.description + '\n' : ''}${s.content}`)
+            .join('\n\n'),
+        )
       }
       case 'save_memory': {
         const fact = String(call.arguments.fact ?? '')
-        if (!fact) return 'No fact was provided.'
+        if (!fact) return fail('No fact was provided.')
         await client.remember([{ role: 'user', content: fact }], {
           namespace: options.namespace,
+          tags: stringList(call.arguments.tags),
+          occurredAt: stringArg(call.arguments.occurred_at),
         })
-        return 'Saved. It will be searchable shortly.'
+        return ok('Saved. It will be searchable shortly.')
       }
       default:
-        return `Unknown tool: ${call.name}`
+        return fail(`Unknown tool: ${call.name}`)
     }
   } catch (e) {
-    return `The memory service failed: ${(e as Error).message}`
+    if (e instanceof GitloomError && e.status === 400) {
+      return fail(`The memory service refused this (${e.code}): ${e.message}`)
+    }
+    const code = e instanceof GitloomError ? e.code : 'unknown'
+    const wait = e instanceof GitloomError && e.retryAfter !== undefined ? ` (retry after ${e.retryAfter}s)` : ''
+    return fail(`The memory service failed (${code}): ${(e as Error)?.message ?? String(e)}${wait}`)
   }
+}
+
+/** The day it happened, then the days it was said, then the memory. Ingestion times stay out. */
+function memoryLine(m: RecalledMemory): string {
+  const day = m.occurredAt ? `[${m.occurredAt.toISOString().slice(0, 10)}] ` : ''
+  const said = m.said?.length ? `(said ${m.said.join(', ')}) ` : ''
+  return `- ${day}${said}${m.content}`
+}
+
+function stringArg(v: unknown): string | undefined {
+  return typeof v === 'string' && v.trim() ? v.trim() : undefined
+}
+
+function timeFieldArg(v: unknown): TimeField | undefined {
+  return v === 'occurred' || v === 'created' || v === 'updated' ? v : undefined
 }
 
 function stringList(v: unknown): string[] | undefined {

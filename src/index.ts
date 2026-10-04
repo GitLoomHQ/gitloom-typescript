@@ -1,8 +1,8 @@
 export { Gitloom, Conversations } from './client'
 export type { GitloomOptions } from './client'
 export { GitloomError } from './errors'
-export { openaiTools, anthropicTools, mcpTools, runTool, isMemoryTool } from './tools'
-export type { ToolCall } from './tools'
+export { openaiTools, anthropicTools, mcpTools, runTool, runToolResult, isMemoryTool } from './tools'
+export type { ToolCall, ToolResult, RunToolOptions } from './tools'
 export { withMemory } from './wrap'
 export type { GitloomFeatures } from './wrap'
 export { Conversation } from './conversation'
@@ -21,15 +21,38 @@ export type {
   Memory,
   RememberOptions,
   RememberResult,
+  TimeInput,
+  TimeField,
+  OccurredSource,
+  OccurredPrecision,
+  WriteOptions,
+  ForgetOptions,
+  NewMemory,
+  StoredMemory,
+  MemoryTimes,
+  TreeNode,
+  TreeOptions,
+  TreeResult,
+  Topic,
+  TopicsOptions,
+  TopicsResult,
+  GraphNode,
+  GraphEdge,
+  GraphOptions,
+  GraphResult,
   RecallOptions,
   RecallFilters,
   RecallMode,
   RecallResult,
   RecalledMemory,
   RecallTimings,
+  RecallRank,
+  ReaderModel,
+  LaneTiming,
   TraceEvent,
   AnswerOptions,
   AnswerResult,
+  ContextOptions,
   Tier,
   HitScores,
   Provenance,
