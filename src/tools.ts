@@ -201,6 +201,20 @@ export interface ToolCall {
   arguments: Record<string, unknown>
 }
 
+export interface RunToolOptions {
+  namespace?: string | undefined
+  /** Recall on the lane path, ordered this way. Off by default. */
+  rank?: RecallRank | undefined
+  /** The most characters of memory content a recall hands back. */
+  maxChars?: number | undefined
+}
+
+/** What a tool call produced, and whether it failed — MCP's `isError`. */
+export interface ToolResult {
+  text: string
+  isError: boolean
+}
+
 /**
  * Runs a tool call the model made and returns the string to hand back.
  *
@@ -211,14 +225,19 @@ export interface ToolCall {
 export async function runTool(
   client: Gitloom,
   call: ToolCall,
-  options: {
-    namespace?: string | undefined
-    /** Recall on the lane path, ordered this way. Off by default. */
-    rank?: RecallRank | undefined
-    /** The most characters of memory content a recall hands back. */
-    maxChars?: number | undefined
-  } = {},
+  options: RunToolOptions = {},
 ): Promise<string> {
+  return (await runToolResult(client, call, options)).text
+}
+
+/** `runTool`, also saying whether the call failed, for hosts that mark a failed tool result. */
+export async function runToolResult(
+  client: Gitloom,
+  call: ToolCall,
+  options: RunToolOptions = {},
+): Promise<ToolResult> {
+  const ok = (text: string): ToolResult => ({ text, isError: false })
+  const fail = (text: string): ToolResult => ({ text, isError: true })
   try {
     switch (call.name) {
       case 'recall_memory': {
@@ -235,43 +254,46 @@ export async function runTool(
         if (filters.since || filters.until) filters.timeField ??= 'occurred'
         const listing =
           filters.tiers || filters.paths || filters.tags || filters.since || filters.until
-        if (!query && !listing) return 'No query or filter was provided.'
+        if (!query && !listing) return fail('No query or filter was provided.')
         // A list without a question has nothing to rank, so the host's rank stays off it.
         const { memories } = query
           ? await client.recall(query, { ...filters, rank: options.rank, maxChars: options.maxChars })
           : await client.recall(filters)
         if (memories.length === 0) {
-          return query ? 'Nothing relevant is stored about this user yet.' : 'No memory matches these filters.'
+          return ok(query ? 'Nothing relevant is stored about this user yet.' : 'No memory matches these filters.')
         }
-        return memories.map(memoryLine).join('\n')
+        return ok(memories.map(memoryLine).join('\n'))
       }
       case 'find_skill': {
         const task = String(call.arguments.task ?? '')
-        if (!task) return 'No task was provided.'
+        if (!task) return fail('No task was provided.')
         const skills = await client.skills.find(task, { namespace: options.namespace, limit: 3 })
-        if (skills.length === 0) return 'No stored skill applies to this task.'
-        return skills
-          .map((s) => `## ${s.name}\n${s.description ? s.description + '\n' : ''}${s.content}`)
-          .join('\n\n')
+        if (skills.length === 0) return ok('No stored skill applies to this task.')
+        return ok(
+          skills
+            .map((s) => `## ${s.name}\n${s.description ? s.description + '\n' : ''}${s.content}`)
+            .join('\n\n'),
+        )
       }
       case 'save_memory': {
         const fact = String(call.arguments.fact ?? '')
-        if (!fact) return 'No fact was provided.'
+        if (!fact) return fail('No fact was provided.')
         await client.remember([{ role: 'user', content: fact }], {
           namespace: options.namespace,
           tags: stringList(call.arguments.tags),
           occurredAt: stringArg(call.arguments.occurred_at),
         })
-        return 'Saved. It will be searchable shortly.'
+        return ok('Saved. It will be searchable shortly.')
       }
       default:
-        return `Unknown tool: ${call.name}`
+        return fail(`Unknown tool: ${call.name}`)
     }
   } catch (e) {
     if (e instanceof GitloomError && e.status === 400) {
-      return `The memory service refused this (${e.code}): ${e.message}`
+      return fail(`The memory service refused this (${e.code}): ${e.message}`)
     }
-    return `The memory service failed: ${(e as Error).message}`
+    const code = e instanceof GitloomError ? e.code : 'unknown'
+    return fail(`The memory service failed (${code}): ${(e as Error)?.message ?? String(e)}`)
   }
 }
 

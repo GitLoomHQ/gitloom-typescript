@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { Gitloom, anthropicTools, mcpTools, openaiTools, runTool } from '../src'
+import { Gitloom, anthropicTools, mcpTools, openaiTools, runTool, runToolResult } from '../src'
 
 function client(responses: Array<{ status?: number; body?: unknown }>) {
   const calls: Array<{ url: URL; body: Record<string, unknown> | undefined }> = []
@@ -156,5 +156,46 @@ describe('runTool save_memory', () => {
     expect(await runTool(gl, { name: 'save_memory', arguments: { fact: 'x', occurred_at: 'last spring' } })).toBe(
       'The memory service refused this (invalid_date): occurred_at: not a time',
     )
+  })
+})
+
+describe('runToolResult', () => {
+  it('marks every failure, including missing input, as an error', async () => {
+    const { gl } = client([{ status: 400, body: { error: { code: 'invalid_tag', message: 'tags[0] "a!" is not a tag' } } }])
+    for (const call of [
+      { name: 'recall_memory', arguments: {} },
+      { name: 'save_memory', arguments: {} },
+      { name: 'find_skill', arguments: {} },
+      { name: 'no_such_tool', arguments: {} },
+    ]) {
+      expect((await runToolResult(gl, call)).isError, call.name).toBe(true)
+    }
+    expect(await runToolResult(gl, { name: 'save_memory', arguments: { fact: 'x', tags: ['a!'] } })).toEqual({
+      text: 'The memory service refused this (invalid_tag): tags[0] "a!" is not a tag',
+      isError: true,
+    })
+  })
+
+  it('names the code of any other failure', async () => {
+    const { gl } = client([
+      { status: 429, body: { error: { code: 'rate_limited', message: 'slow down' } } },
+      { status: 403, body: { message: 'Forbidden' } },
+    ])
+    expect(await runToolResult(gl, { name: 'recall_memory', arguments: { query: 'x' } })).toEqual({
+      text: 'The memory service failed (rate_limited): slow down',
+      isError: true,
+    })
+    expect(await runTool(gl, { name: 'recall_memory', arguments: { query: 'x' } })).toBe(
+      'The memory service failed (unauthorized): The API key was not accepted (403 Forbidden) — check GITLOOM_API_KEY, or whether the key has been revoked.',
+    )
+  })
+
+  it('is not an error when the call worked, even when nothing matched', async () => {
+    const { gl } = client([empty, { status: 202, body: { id: 'j', namespace: 'default', status: 'accepted' } }])
+    expect(await runToolResult(gl, { name: 'recall_memory', arguments: { query: 'x' } })).toEqual({
+      text: 'Nothing relevant is stored about this user yet.',
+      isError: false,
+    })
+    expect((await runToolResult(gl, { name: 'save_memory', arguments: { fact: 'Likes tea.' } })).isError).toBe(false)
   })
 })
