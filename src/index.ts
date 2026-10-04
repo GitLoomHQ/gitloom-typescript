@@ -29,6 +29,7 @@ export type {
   ForgetOptions,
   NewMemory,
   StoredMemory,
+  MemoryTimes,
   TreeNode,
   TreeOptions,
   TreeResult,

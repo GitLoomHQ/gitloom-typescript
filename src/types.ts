@@ -70,14 +70,8 @@ export interface NewMemory {
   related?: string[] | undefined
 }
 
-/** One memory read back by path. */
-export interface StoredMemory {
-  namespace: string
-  path: string
-  title?: string
-  tier?: string
-  kind?: string
-  content: string
+/** A memory's tags and times, the same on `get` and `recall`. */
+export interface MemoryTimes {
   /** Your tags first, then the ones GitLoom inferred. Empty when there are none. */
   tags: string[]
   /** Your tags alone. */
@@ -89,14 +83,25 @@ export interface StoredMemory {
   occurredSource?: OccurredSource
   /** At `day`, `occurredAt` is noon UTC on the date: show it as a date. */
   occurredPrecision?: OccurredPrecision
+  /** When a memory with a TTL expires. */
   expiresAt?: Date
-  confidence?: number
-  cues?: string[]
-  related?: string[]
   /** @deprecated Use `createdAt`. */
   created?: string
   /** @deprecated Use `updatedAt`. */
   updated?: string
+}
+
+/** One memory read back by path. */
+export interface StoredMemory extends MemoryTimes {
+  namespace: string
+  path: string
+  title?: string
+  tier?: string
+  kind?: string
+  content: string
+  confidence?: number
+  cues?: string[]
+  related?: string[]
 }
 
 /** One level of the hierarchical table of contents. */
@@ -315,7 +320,7 @@ export interface VocabHit {
 }
 
 /** One recalled memory: the whole memory, with everything needed to cite it. */
-export interface RecalledMemory {
+export interface RecalledMemory extends MemoryTimes {
   path: string
   tier: string
   topic?: string
@@ -342,23 +347,6 @@ export interface RecalledMemory {
   sections?: string[]
   /** For a graph neighbour, the memories it was reached from. */
   via?: string[]
-  /** Your tags first, then the ones GitLoom inferred. */
-  tags?: string[]
-  /** Your tags alone. */
-  userTags?: string[]
-  createdAt?: Date
-  updatedAt?: Date
-  /** When the memory's subject happened. */
-  occurredAt?: Date
-  occurredSource?: OccurredSource
-  /** At `day`, `occurredAt` is noon UTC on the date: show it as a date. */
-  occurredPrecision?: OccurredPrecision
-  /** When a memory with a TTL expires. */
-  expiresAt?: Date
-  /** @deprecated Use `createdAt`. */
-  created?: string
-  /** @deprecated Use `updatedAt`. */
-  updated?: string
   confidence?: number
   cues?: string[]
   scores?: HitScores | undefined

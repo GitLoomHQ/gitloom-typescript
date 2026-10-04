@@ -6,7 +6,7 @@
  * browser, which matters because agents get deployed in all of them.
  */
 
-import { GitloomError, errorFromResponse } from './errors'
+import { GitloomError, errorFromResponse, redact, scrubbed } from './errors'
 import { Conversation, type ConversationOptions } from './conversation'
 import { Media } from './media'
 import { Skills, Vocab } from './memory'
@@ -20,6 +20,7 @@ import type {
   GraphResult,
   KeyInfo,
   Memory,
+  MemoryTimes,
   NewMemory,
   OccurredPrecision,
   OccurredSource,
@@ -62,14 +63,14 @@ const DEFAULT_BASE_URL = 'https://api.gitloom.cloud'
 export class Gitloom {
   readonly baseUrl: string
   readonly namespace: string
-  private readonly apiKey: string
+  readonly #apiKey: string
   private readonly timeoutMs: number
   private readonly maxRetries: number
   private readonly fetchImpl: typeof fetch
 
   constructor(options: GitloomOptions = {}) {
     const env = readEnv()
-    const apiKey = options.apiKey ?? env.GITLOOM_API_KEY
+    const apiKey = options.apiKey?.trim() || env.GITLOOM_API_KEY?.trim()
     if (!apiKey) {
       throw new GitloomError(
         'missing_api_key',
@@ -77,7 +78,15 @@ export class Gitloom {
         0,
       )
     }
-    this.apiKey = apiKey
+    // A header value that fetch refuses comes back in its error text, key and all.
+    if (!/^[\x21-\x7e]+$/.test(apiKey)) {
+      throw new GitloomError(
+        'invalid_api_key',
+        'The API key contains whitespace or control characters — check GITLOOM_API_KEY, or the key passed to the client.',
+        0,
+      )
+    }
+    this.#apiKey = apiKey
     this.baseUrl = (options.baseUrl ?? env.GITLOOM_BASE_URL ?? DEFAULT_BASE_URL).replace(/\/+$/, '')
     this.namespace = options.namespace ?? 'default'
     this.timeoutMs = options.timeoutMs ?? 30_000
@@ -95,7 +104,7 @@ export class Gitloom {
   /** A client bound to one namespace. Cheap — it shares this one's config. */
   for(namespace: string): Gitloom {
     return new Gitloom({
-      apiKey: this.apiKey,
+      apiKey: this.#apiKey,
       baseUrl: this.baseUrl,
       namespace,
       timeoutMs: this.timeoutMs,
@@ -196,11 +205,13 @@ export class Gitloom {
     options: { namespace?: string | undefined; signal?: AbortSignal | undefined } = {},
   ): Promise<StoredMemory> {
     const params = new URLSearchParams({ path, namespace: options.namespace ?? this.namespace })
-    const { tags, ...w } = await this.request<
-      Omit<Wire<StoredMemory>, 'tags'> & { tags?: string[] | null }
-    >('GET', `/v1/memories?${params.toString()}`, undefined, { signal: options.signal })
-    const m = fromWire<StoredMemory>({ ...w, tags: tags ?? [] })
-    return { ...m, userTags: m.userTags ?? [] }
+    const res = await this.request<Wire<StoredMemory>>(
+      'GET',
+      `/v1/memories?${params.toString()}`,
+      undefined,
+      { signal: options.signal },
+    )
+    return fromWire<StoredMemory>(res)
   }
 
   /**
@@ -504,7 +515,7 @@ export class Gitloom {
         const res = await this.fetchImpl(`${this.baseUrl}${path}`, {
           method,
           headers: {
-            authorization: `Bearer ${this.apiKey}`,
+            authorization: `Bearer ${this.#apiKey}`,
             ...(body === undefined ? {} : { 'content-type': 'application/json' }),
           },
           ...(body === undefined ? {} : { body: JSON.stringify(body) }),
@@ -520,12 +531,12 @@ export class Gitloom {
             // SyntaxError makes that look like a bug in the caller's code.
             throw new GitloomError(
               'invalid_response',
-              `Expected JSON from ${path} but got ${text.slice(0, 80)}`,
+              redact(`Expected JSON from ${path} but got ${text.slice(0, 80)}`, this.#apiKey),
               res.status,
             )
           }
         }
-        const err = await errorFromResponse(res)
+        const err = await errorFromResponse(res, this.#apiKey)
         // A 4xx is the caller's to fix; retrying only delays the message. 429
         // and 5xx are the server's, and may succeed on their own.
         if (!err.retryable || attempt === attempts) throw err
@@ -544,9 +555,12 @@ export class Gitloom {
           lastError = e
         } else {
           if (attempt === attempts) {
-            throw new GitloomError('network_error', String((e as Error)?.message ?? e), 0, {
-              cause: e,
-            })
+            throw new GitloomError(
+              'network_error',
+              redact(String((e as Error)?.message ?? e), this.#apiKey),
+              0,
+              { cause: scrubbed(e, this.#apiKey) },
+            )
           }
           lastError = e
         }
@@ -562,28 +576,20 @@ export class Gitloom {
   }
 }
 
-interface Times {
-  userTags?: string[]
-  createdAt?: Date
-  updatedAt?: Date
-  occurredAt?: Date
-  occurredSource?: OccurredSource
-  occurredPrecision?: OccurredPrecision
-  expiresAt?: Date
-}
-
-type Wire<T> = Omit<T, keyof Times> & {
+type Wire<T> = Omit<T, Exclude<keyof MemoryTimes, 'created' | 'updated'>> & {
+  tags?: string[] | null
   user_tags?: string[] | null
-  created_at?: number
-  updated_at?: number
-  occurred_at?: number
+  created_at?: number | string
+  updated_at?: number | string
+  occurred_at?: number | string
   occurred_source?: OccurredSource
   occurred_precision?: OccurredPrecision
-  expires_at?: number
+  expires_at?: number | string
 }
 
-function fromWire<T extends Times>(w: Wire<T>): T {
+function fromWire<T extends MemoryTimes>(w: Wire<T>): T {
   const {
+    tags,
     user_tags,
     created_at,
     updated_at,
@@ -593,15 +599,22 @@ function fromWire<T extends Times>(w: Wire<T>): T {
     expires_at,
     ...m
   } = w
-  const out = m as unknown as T
-  if (user_tags) out.userTags = user_tags
-  if (created_at) out.createdAt = new Date(created_at * 1000)
-  if (updated_at) out.updatedAt = new Date(updated_at * 1000)
-  if (occurred_at) out.occurredAt = new Date(occurred_at * 1000)
+  const out = { ...m, tags: tags ?? [], userTags: user_tags ?? [] } as unknown as T
+  const times = { createdAt: created_at, updatedAt: updated_at, occurredAt: occurred_at, expiresAt: expires_at }
+  for (const [k, v] of Object.entries(times)) {
+    const d = toDate(v)
+    if (d) out[k as 'createdAt'] = d
+  }
   if (occurred_source) out.occurredSource = occurred_source
   if (occurred_precision) out.occurredPrecision = occurred_precision
-  if (expires_at) out.expiresAt = new Date(expires_at * 1000)
   return out
+}
+
+/** Unix seconds, or an RFC 3339 string if a caller asked the server for one. */
+function toDate(v: number | string | undefined): Date | undefined {
+  if (v === undefined || v === null || v === '' || v === 0) return undefined
+  const d = typeof v === 'number' ? new Date(v * 1000) : new Date(v)
+  return Number.isNaN(d.getTime()) ? undefined : d
 }
 
 function recallArgs<O extends RecallOptions>(a: string | O | undefined, b: O | undefined): [string, O] {

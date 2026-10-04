@@ -91,14 +91,14 @@ describe('retries', () => {
     expect(calls.length).toBe(2)
   })
 
-  it('surfaces a network failure as a GitloomError carrying the cause', async () => {
+  it('surfaces a network failure as a GitloomError carrying a copy of the cause', async () => {
     const boom = new TypeError('fetch failed')
     const { impl } = fetchStub(() => Promise.reject(boom))
     const g = client(impl)
     const err = await g.recall('x').catch((e) => e)
     expect(err).toBeInstanceOf(GitloomError)
     expect(err.code).toBe('network_error')
-    expect(err.cause).toBe(boom)
+    expect(err.cause).toMatchObject({ name: 'TypeError', message: 'fetch failed' })
   })
 
   it('does not retry a write, so one save cannot become three', async () => {
@@ -257,7 +257,7 @@ describe('error contract', () => {
     const { err, calls } = await fail(json({ message: 'Forbidden' }, 403))
     expect(err.code).toBe('unauthorized')
     expect(err.message).toBe(
-      'The API key was not accepted (403 Forbidden) — check GITLOOM_API_KEY, or whether the key has been revoked.',
+      'The API key was not accepted (403 Forbidden) — check the API key (GITLOOM_API_KEY, or the key passed to the client), or whether it has been revoked.',
     )
     expect(calls).toHaveLength(1)
   })
@@ -265,7 +265,9 @@ describe('error contract', () => {
   it('names a gateway 401 as a missing key', async () => {
     const { err } = await fail(json({ message: 'Unauthorized' }, 401))
     expect(err.code).toBe('unauthorized')
-    expect(err.message).toBe('No API key was accepted (401 Unauthorized) — check GITLOOM_API_KEY.')
+    expect(err.message).toBe(
+      'No API key was accepted (401 Unauthorized) — check the API key (GITLOOM_API_KEY, or the key passed to the client).',
+    )
   })
 
   it('keeps a plain-text body as the message', async () => {
@@ -279,13 +281,16 @@ describe('error contract', () => {
   })
 
   it('reads JSON that is not an object as text, and never crashes on it', async () => {
-    expect((await fail(new Response('null', { status: 500 }))).err).toMatchObject({ code: 'http_500', message: 'null' })
     expect((await fail(new Response('[1,2]', { status: 500 }))).err).toMatchObject({ code: 'http_500', message: '[1,2]' })
     expect((await fail(new Response('"oops"', { status: 500 }))).err).toMatchObject({ code: 'http_500', message: '"oops"' })
+    expect((await fail(new Response('42', { status: 500 }))).err).toMatchObject({ code: 'http_500', message: '42' })
   })
 
-  it('falls back to the status text for an empty body, and caps a long one', async () => {
+  it('falls back to the status text for an empty, blank or null body, and caps a long one', async () => {
     expect((await fail(new Response('', { status: 502, statusText: 'Bad Gateway' }))).err.message).toBe('Bad Gateway')
+    expect((await fail(new Response('  \n ', { status: 502, statusText: 'Bad Gateway' }))).err.message).toBe('Bad Gateway')
+    expect((await fail(new Response('null', { status: 500, statusText: 'Internal Server Error' }))).err)
+      .toMatchObject({ code: 'http_500', message: 'Internal Server Error' })
     expect((await fail(new Response('', { status: 502 }))).err.message).toBe('Request failed with 502')
     const long = (await fail(new Response('x'.repeat(1000), { status: 500 }))).err.message
     expect(long).toBe(`${'x'.repeat(300)}…`)

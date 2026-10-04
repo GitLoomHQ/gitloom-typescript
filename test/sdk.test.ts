@@ -404,7 +404,8 @@ describe('tags and times on recall', () => {
     expect([m!.created, m!.updated]).toEqual(['2026-07-31T10:02:11Z', '2026-07-31T10:03:20Z'])
     expect(m).not.toHaveProperty('created_at')
     expect(m).not.toHaveProperty('user_tags')
-    for (const k of ['userTags', 'createdAt', 'updatedAt', 'occurredAt', 'expiresAt', 'occurredSource', 'occurredPrecision']) {
+    expect([bare!.tags, bare!.userTags]).toEqual([[], []])
+    for (const k of ['createdAt', 'updatedAt', 'occurredAt', 'expiresAt', 'occurredSource', 'occurredPrecision']) {
       expect(bare![k as keyof typeof bare]).toBeUndefined()
     }
   })

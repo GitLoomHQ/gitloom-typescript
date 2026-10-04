@@ -293,7 +293,8 @@ export async function runToolResult(
       return fail(`The memory service refused this (${e.code}): ${e.message}`)
     }
     const code = e instanceof GitloomError ? e.code : 'unknown'
-    return fail(`The memory service failed (${code}): ${(e as Error)?.message ?? String(e)}`)
+    const wait = e instanceof GitloomError && e.retryAfter !== undefined ? ` (retry after ${e.retryAfter}s)` : ''
+    return fail(`The memory service failed (${code}): ${(e as Error)?.message ?? String(e)}${wait}`)
   }
 }
 

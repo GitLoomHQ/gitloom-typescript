@@ -186,7 +186,7 @@ describe('runToolResult', () => {
       isError: true,
     })
     expect(await runTool(gl, { name: 'recall_memory', arguments: { query: 'x' } })).toBe(
-      'The memory service failed (unauthorized): The API key was not accepted (403 Forbidden) — check GITLOOM_API_KEY, or whether the key has been revoked.',
+      'The memory service failed (unauthorized): The API key was not accepted (403 Forbidden) — check the API key (GITLOOM_API_KEY, or the key passed to the client), or whether it has been revoked.',
     )
   })
 
