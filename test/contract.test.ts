@@ -204,6 +204,21 @@ describe('legacy and odd bodies', () => {
     const { gl } = stub(() => new Response('{"error":"q is required"}', { status: 400 }))
     await expect(gl.recall('x')).rejects.toMatchObject({ code: 'http_400', message: 'q is required' })
   })
+
+  // Every SDK reads a 401 or 403 without the envelope as the gateway's, flat or not.
+  it('reads a flat 401 or 403 as unauthorized', async () => {
+    const forbidden = stub(() => new Response('{"error":"this key is scoped to another namespace"}', { status: 403 }))
+    await expect(forbidden.gl.recall('x')).rejects.toMatchObject({
+      code: 'unauthorized',
+      message:
+        'The API key was not accepted (403 Forbidden) — check the API key (GITLOOM_API_KEY, or the key passed to the client), or whether it has been revoked.',
+    })
+    const unauthorized = stub(() => new Response('{"error":"no key"}', { status: 401 }))
+    await expect(unauthorized.gl.recall('x')).rejects.toMatchObject({
+      code: 'unauthorized',
+      message: 'No API key was accepted (401 Unauthorized) — check the API key (GITLOOM_API_KEY, or the key passed to the client).',
+    })
+  })
 })
 
 describe('Retry-After', () => {

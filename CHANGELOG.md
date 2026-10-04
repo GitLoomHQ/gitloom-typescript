@@ -64,7 +64,7 @@
   longer thrown away), else the status text. New: `isRateLimited`
   (`rate_limited`) and `isBalanceExhausted` (`balance_exhausted`).
 - **Error bodies:** a legacy flat `{"error":"…"}` reads that text as the
-  message; an empty, blank or JSON `null` body reads the status text; other
+  message, except on a 401 or 403, which is always `unauthorized`; an empty, blank or JSON `null` body reads the status text; other
   non-object JSON reads as its text. A 429's integer `Retry-After` is
   `retryAfter` on the error; nothing retries on it.
 - **Times read the same everywhere**: `get()` and `recall()` share

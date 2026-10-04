@@ -78,9 +78,6 @@ export async function errorFromResponse(res: Response, secret: string): Promise<
       { retryAfter: retry },
     )
   }
-  if (typeof obj?.error === 'string' && obj.error) {
-    return new GitloomError(`http_${res.status}`, obj.error, res.status, { retryAfter: retry })
-  }
   if (res.status === 403) {
     return new GitloomError(
       'unauthorized',
@@ -94,6 +91,9 @@ export async function errorFromResponse(res: Response, secret: string): Promise<
       'No API key was accepted (401 Unauthorized) — check the API key (GITLOOM_API_KEY, or the key passed to the client).',
       401,
     )
+  }
+  if (typeof obj?.error === 'string' && obj.error) {
+    return new GitloomError(`http_${res.status}`, obj.error, res.status, { retryAfter: retry })
   }
   let message = statusText(res)
   if (typeof obj?.message === 'string' && obj.message) message = obj.message
