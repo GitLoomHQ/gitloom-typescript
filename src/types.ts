@@ -78,11 +78,24 @@ export interface StoredMemory {
   tier?: string
   kind?: string
   content: string
-  tags?: string[]
+  /** Your tags first, then the ones GitLoom inferred. Empty when there are none. */
+  tags: string[]
+  /** Your tags alone. */
+  userTags: string[]
+  createdAt?: Date
+  updatedAt?: Date
+  /** When the memory's subject happened. */
+  occurredAt?: Date
+  occurredSource?: OccurredSource
+  /** At `day`, `occurredAt` is noon UTC on the date: show it as a date. */
+  occurredPrecision?: OccurredPrecision
+  expiresAt?: Date
   confidence?: number
   cues?: string[]
   related?: string[]
+  /** @deprecated Use `createdAt`. */
   created?: string
+  /** @deprecated Use `updatedAt`. */
   updated?: string
 }
 

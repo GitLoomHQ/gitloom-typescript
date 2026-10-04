@@ -196,9 +196,11 @@ export class Gitloom {
     options: { namespace?: string | undefined; signal?: AbortSignal | undefined } = {},
   ): Promise<StoredMemory> {
     const params = new URLSearchParams({ path, namespace: options.namespace ?? this.namespace })
-    return this.request('GET', `/v1/memories?${params.toString()}`, undefined, {
-      signal: options.signal,
-    })
+    const { tags, ...w } = await this.request<
+      Omit<Wire<StoredMemory>, 'tags'> & { tags?: string[] | null }
+    >('GET', `/v1/memories?${params.toString()}`, undefined, { signal: options.signal })
+    const m = fromWire<StoredMemory>({ ...w, tags: tags ?? [] })
+    return { ...m, userTags: m.userTags ?? [] }
   }
 
   /**
@@ -348,7 +350,7 @@ export class Gitloom {
     if (options.model) params.set('model', options.model)
     const res = await this.request<
       Omit<Partial<RecallResult>, 'memories'> & {
-        memories?: WireMemory[] | null
+        memories?: Wire<RecalledMemory>[] | null
         rank_fallback?: boolean
       }
     >(
@@ -361,7 +363,7 @@ export class Gitloom {
       namespace: res.namespace ?? options.namespace ?? this.namespace,
       query: res.query ?? query,
       mode: res.mode ?? options.mode ?? 'raw',
-      memories: (res.memories ?? []).map(fromWire),
+      memories: (res.memories ?? []).map((m) => fromWire<RecalledMemory>(m)),
       ...(res.defined ? { defined: res.defined } : {}),
       ...(res.answer ? { answer: res.answer } : {}),
       ...(res.model ? { model: res.model } : {}),
@@ -560,17 +562,18 @@ export class Gitloom {
   }
 }
 
-type WireMemory = Omit<
-  RecalledMemory,
-  | 'userTags'
-  | 'createdAt'
-  | 'updatedAt'
-  | 'occurredAt'
-  | 'occurredSource'
-  | 'occurredPrecision'
-  | 'expiresAt'
-> & {
-  user_tags?: string[]
+interface Times {
+  userTags?: string[]
+  createdAt?: Date
+  updatedAt?: Date
+  occurredAt?: Date
+  occurredSource?: OccurredSource
+  occurredPrecision?: OccurredPrecision
+  expiresAt?: Date
+}
+
+type Wire<T> = Omit<T, keyof Times> & {
+  user_tags?: string[] | null
   created_at?: number
   updated_at?: number
   occurred_at?: number
@@ -579,7 +582,7 @@ type WireMemory = Omit<
   expires_at?: number
 }
 
-function fromWire(w: WireMemory): RecalledMemory {
+function fromWire<T extends Times>(w: Wire<T>): T {
   const {
     user_tags,
     created_at,
@@ -590,7 +593,7 @@ function fromWire(w: WireMemory): RecalledMemory {
     expires_at,
     ...m
   } = w
-  const out: RecalledMemory = m
+  const out = m as unknown as T
   if (user_tags) out.userTags = user_tags
   if (created_at) out.createdAt = new Date(created_at * 1000)
   if (updated_at) out.updatedAt = new Date(updated_at * 1000)

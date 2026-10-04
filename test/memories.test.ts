@@ -131,6 +131,40 @@ describe('get and forget', () => {
     expect([m.content, m.confidence]).toEqual(['Maya rides a bicycle.', 0.8])
   })
 
+  it('reads tags and times off a stored memory as the server sends them', async () => {
+    const { gl } = client([
+      {
+        body: {
+          confidence: 0, content: 'Lease signed.', created: '2026-10-04T13:33:23Z', created_at: 1791120803,
+          kind: 'file', millis: 0, namespace: 'x', occurred_at: 1772712000, occurred_precision: 'day',
+          occurred_source: 'user', path: 'facts/test/a.md', tags: ['home', 'lease'], tier: 'facts', title: '',
+          updated: '2026-10-04T13:33:23Z', updated_at: 1791120803, user_tags: ['home', 'lease'],
+        },
+      },
+    ])
+    const m = await gl.get('facts/test/a.md', { namespace: 'x' })
+    expect(m.tags).toEqual(['home', 'lease'])
+    expect(m.userTags).toEqual(['home', 'lease'])
+    expect(m.createdAt?.toISOString()).toBe('2026-10-04T13:33:23.000Z')
+    expect(m.updatedAt?.toISOString()).toBe('2026-10-04T13:33:23.000Z')
+    expect(m.occurredAt?.toISOString()).toBe('2026-03-05T12:00:00.000Z')
+    expect(m.expiresAt).toBeUndefined()
+    expect([m.occurredSource, m.occurredPrecision]).toEqual(['user', 'day'])
+    expect([m.created, m.updated]).toEqual(['2026-10-04T13:33:23Z', '2026-10-04T13:33:23Z'])
+    expect(m).not.toHaveProperty('created_at')
+    expect(m).not.toHaveProperty('user_tags')
+  })
+
+  it('reads null tags on an untagged memory as empty lists', async () => {
+    const { gl } = client([
+      { body: { namespace: 'x', path: 'facts/test/b.md', kind: 'file', content: 'B.', tags: null, user_tags: null, created_at: 1791120803 } },
+    ])
+    const m = await gl.get('facts/test/b.md')
+    expect([m.tags, m.userTags]).toEqual([[], []])
+    expect(m.occurredAt).toBeUndefined()
+    expect(m.createdAt).toBeInstanceOf(Date)
+  })
+
   // Several HTTP clients decline to send a body on DELETE.
   it('forgets by path in the query string, not a body', async () => {
     const { gl, calls } = client([{ status: 202, body: { status: 'accepted' } }])
