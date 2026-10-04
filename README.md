@@ -236,6 +236,8 @@ provider's own shape. `textPart`, `imagePart` and `imageData` build GitLoom's
 parts for `conv.append()` on a conversation you drive yourself, where
 `imageData`'s bytes are uploaded on append and stored by reference.
 
+The URL expires after 15 minutes; in a conversation that stays open longer, fetch a fresh one with `memory.media.get(id)` before the image is sent again.
+
 ## Errors
 
 Every failure is a `GitloomError` with a stable `code`, the HTTP `status` (0
