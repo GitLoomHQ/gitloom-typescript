@@ -13,14 +13,29 @@ import { Skills, Vocab } from './memory'
 import type {
   AnswerOptions,
   AnswerResult,
+  ContextOptions,
   CreateKeyResult,
+  ForgetOptions,
+  GraphOptions,
+  GraphResult,
   KeyInfo,
   Memory,
+  NewMemory,
+  OccurredPrecision,
+  OccurredSource,
+  RecallFilters,
   RecallOptions,
   RecallResult,
   RecalledMemory,
   RememberOptions,
   RememberResult,
+  StoredMemory,
+  TimeInput,
+  TopicsOptions,
+  TopicsResult,
+  TreeOptions,
+  TreeResult,
+  WriteOptions,
 } from './types'
 
 export interface GitloomOptions {
@@ -128,11 +143,133 @@ export class Gitloom {
         namespace,
         session_id: options.sessionId,
         date: options.date,
+        occurred_at: timeArg(options.occurredAt),
+        timezone: options.timezone,
+        tags: options.tags,
         messages: messages.map((m) => ({ role: m.role, content: m.content })),
       },
       { signal: options.signal, retry: options.retryOnServerError },
     )
     return { id: res.id, namespace: res.namespace, status: 'accepted' }
+  }
+
+  /**
+   * Stores already-formed memories, as given, with no model deciding what to
+   * keep. Asynchronous like `remember`: they appear in retrieval within seconds.
+   *
+   * Send them in batches: one call is one commit round, so a thousand memories
+   * sent one at a time costs a thousand times what a few batches do.
+   */
+  async write(memories: NewMemory[], options: WriteOptions = {}): Promise<void> {
+    if (memories.length === 0) return
+    memories.forEach((m, i) => {
+      if (!m.path.endsWith('.md')) {
+        throw new GitloomError('invalid_path', `memory ${i}: path "${m.path}" must end in .md`, 0)
+      }
+    })
+    await this.request(
+      'POST',
+      '/v1/memories',
+      {
+        namespace: options.namespace ?? this.namespace,
+        timezone: options.timezone,
+        memories: memories.map((m) => ({
+          path: m.path,
+          content: m.content,
+          tags: m.tags,
+          occurred_at: timeArg(m.occurredAt),
+          date: m.date,
+          confidence: m.confidence,
+          ttl: m.ttl,
+          supersedes: m.supersedes,
+          cues: m.cues,
+          related: m.related,
+        })),
+      },
+      { signal: options.signal, retry: options.retryOnServerError },
+    )
+  }
+
+  /** Reads one memory by path — a file, or `file.md#section`. What follows a recall hit. */
+  async get(
+    path: string,
+    options: { namespace?: string | undefined; signal?: AbortSignal | undefined } = {},
+  ): Promise<StoredMemory> {
+    const params = new URLSearchParams({ path, namespace: options.namespace ?? this.namespace })
+    return this.request('GET', `/v1/memories?${params.toString()}`, undefined, {
+      signal: options.signal,
+    })
+  }
+
+  /**
+   * Deletes memories by path. Asynchronous. It unpublishes them from
+   * retrieval; earlier revisions remain in the repository's history.
+   */
+  async forget(paths: string[], options: ForgetOptions = {}): Promise<void> {
+    if (paths.length === 0) return
+    const params = new URLSearchParams({
+      path: paths.join(','),
+      namespace: options.namespace ?? this.namespace,
+    })
+    await this.request('DELETE', `/v1/memories?${params.toString()}`, undefined, {
+      signal: options.signal,
+      retry: options.retryOnServerError,
+    })
+  }
+
+  /** The table of contents: tier → topic → file → sections, with a summary at each level. */
+  async tree(options: TreeOptions = {}): Promise<TreeResult> {
+    const params = new URLSearchParams({ namespace: options.namespace ?? this.namespace })
+    if (options.path) params.set('path', options.path)
+    if (options.depth) params.set('depth', String(options.depth))
+    return this.request('GET', `/v1/tree?${params.toString()}`, undefined, {
+      signal: options.signal,
+    })
+  }
+
+  /**
+   * The topics (directories) with how many memories each holds. Check before
+   * filing under a new topic, so `facts/database` does not appear beside
+   * `facts/databases`.
+   */
+  async topics(options: TopicsOptions = {}): Promise<TopicsResult> {
+    const params = new URLSearchParams({ namespace: options.namespace ?? this.namespace })
+    if (options.tier) params.set('tier', options.tier)
+    if (options.prefix) params.set('prefix', options.prefix)
+    if (options.like) params.set('like', options.like)
+    if (options.maxDepth) params.set('max_depth', String(options.maxDepth))
+    if (options.minFiles) params.set('min_files', String(options.minFiles))
+    if (options.limit) params.set('limit', String(options.limit))
+    const res = await this.request<Partial<TopicsResult>>(
+      'GET',
+      `/v1/topics?${params.toString()}`,
+      undefined,
+      { signal: options.signal },
+    )
+    return {
+      namespace: res.namespace ?? options.namespace ?? this.namespace,
+      topics: res.topics ?? [],
+      millis: res.millis ?? 0,
+    }
+  }
+
+  /** The relationship graph between memories. `truncated` means it was larger than one response. */
+  async graph(options: GraphOptions = {}): Promise<GraphResult> {
+    const params = new URLSearchParams({ namespace: options.namespace ?? this.namespace })
+    if (options.limit) params.set('limit', String(options.limit))
+    const res = await this.request<Partial<GraphResult>>(
+      'GET',
+      `/v1/graph?${params.toString()}`,
+      undefined,
+      { signal: options.signal },
+    )
+    return {
+      namespace: res.namespace ?? options.namespace ?? this.namespace,
+      nodes: res.nodes ?? [],
+      edges: res.edges ?? [],
+      truncated: res.truncated ?? false,
+      millis: res.millis ?? 0,
+    }
   }
 
   /**
@@ -171,9 +308,26 @@ export class Gitloom {
    * narrow every retrieval arm, so a memory outside them cannot surface even
    * as a graph neighbour. `mode: 'summary'` adds a text answer from a fast
    * model; `mode: 'agentic'` lets a stronger model search for itself.
+   *
+   * Without a query, the filters (`tags`, `tagsAll`, `since`, `until`, `tiers`
+   * or `paths`) list every memory they match, newest first by `timeField`,
+   * each scored 1. That needs `mode: 'raw'` and no `rank`.
    */
-  async recall(query: string, options: RecallOptions = {}): Promise<RecallResult> {
-    const params = new URLSearchParams({ q: query })
+  recall(options: RecallOptions): Promise<RecallResult>
+  recall(query: string | undefined, options?: RecallOptions): Promise<RecallResult>
+  async recall(
+    queryOrOptions?: string | RecallOptions,
+    maybeOptions?: RecallOptions,
+  ): Promise<RecallResult> {
+    const [query, options] = recallArgs(queryOrOptions, maybeOptions)
+    if (!query && !filtered(options)) {
+      throw new GitloomError(
+        'missing_query',
+        'recall needs a query, or a filter (tags, tagsAll, since, until, tiers or paths) to list by',
+        0,
+      )
+    }
+    const params = new URLSearchParams(query ? { q: query } : {})
     params.set('namespace', options.namespace ?? this.namespace)
     if (options.limit) params.set('limit', String(options.limit))
     if (options.mode && options.mode !== 'raw') params.set('mode', options.mode)
@@ -181,8 +335,10 @@ export class Gitloom {
     if (options.paths?.length) params.set('paths', options.paths.join(','))
     if (options.tags?.length) params.set('tags', options.tags.join(','))
     if (options.tagsAll?.length) params.set('tags_all', options.tagsAll.join(','))
-    if (options.since) params.set('since', dateParam(options.since))
-    if (options.until) params.set('until', dateParam(options.until))
+    if (options.since) params.set('since', String(timeArg(options.since)))
+    if (options.until) params.set('until', String(timeArg(options.until)))
+    if (options.timeField) params.set('time_field', options.timeField)
+    if (options.tz) params.set('tz', options.tz)
     if (options.minScore !== undefined) params.set('min_score', String(options.minScore))
     if (options.context === false) params.set('context', '0')
     if (options.detail === 'full') params.set('detail', 'full')
@@ -191,7 +347,10 @@ export class Gitloom {
     if (options.maxChars) params.set('max_chars', String(options.maxChars))
     if (options.model) params.set('model', options.model)
     const res = await this.request<
-      Partial<RecallResult> & { memories?: RecalledMemory[] | null; rank_fallback?: boolean }
+      Omit<Partial<RecallResult>, 'memories'> & {
+        memories?: WireMemory[] | null
+        rank_fallback?: boolean
+      }
     >(
       'GET',
       `/v1/retrieve?${params.toString()}`,
@@ -202,7 +361,7 @@ export class Gitloom {
       namespace: res.namespace ?? options.namespace ?? this.namespace,
       query: res.query ?? query,
       mode: res.mode ?? options.mode ?? 'raw',
-      memories: res.memories ?? [],
+      memories: (res.memories ?? []).map(fromWire),
       ...(res.defined ? { defined: res.defined } : {}),
       ...(res.answer ? { answer: res.answer } : {}),
       ...(res.model ? { model: res.model } : {}),
@@ -247,10 +406,16 @@ export class Gitloom {
    * one call: composing it by hand means every integration invents its own
    * wording for how the model should treat remembered context.
    */
+  context(options: ContextOptions): Promise<{ role: 'system'; content: string } | null>
+  context(
+    query: string | undefined,
+    options?: ContextOptions,
+  ): Promise<{ role: 'system'; content: string } | null>
   async context(
-    query: string,
-    options: RecallOptions & { header?: string | undefined } = {},
+    queryOrOptions?: string | ContextOptions,
+    maybeOptions?: ContextOptions,
   ): Promise<{ role: 'system'; content: string } | null> {
+    const [query, options] = recallArgs(queryOrOptions, maybeOptions)
     const { memories } = await this.recall(query, options)
     if (memories.length === 0) return null
     const header =
@@ -395,8 +560,75 @@ export class Gitloom {
   }
 }
 
-function dateParam(d: string | Date): string {
-  return d instanceof Date ? d.toISOString() : d
+type WireMemory = Omit<
+  RecalledMemory,
+  | 'userTags'
+  | 'createdAt'
+  | 'updatedAt'
+  | 'occurredAt'
+  | 'occurredSource'
+  | 'occurredPrecision'
+  | 'expiresAt'
+> & {
+  user_tags?: string[]
+  created_at?: number
+  updated_at?: number
+  occurred_at?: number
+  occurred_source?: OccurredSource
+  occurred_precision?: OccurredPrecision
+  expires_at?: number
+}
+
+function fromWire(w: WireMemory): RecalledMemory {
+  const {
+    user_tags,
+    created_at,
+    updated_at,
+    occurred_at,
+    occurred_source,
+    occurred_precision,
+    expires_at,
+    ...m
+  } = w
+  const out: RecalledMemory = m
+  if (user_tags) out.userTags = user_tags
+  if (created_at) out.createdAt = new Date(created_at * 1000)
+  if (updated_at) out.updatedAt = new Date(updated_at * 1000)
+  if (occurred_at) out.occurredAt = new Date(occurred_at * 1000)
+  if (occurred_source) out.occurredSource = occurred_source
+  if (occurred_precision) out.occurredPrecision = occurred_precision
+  if (expires_at) out.expiresAt = new Date(expires_at * 1000)
+  return out
+}
+
+function recallArgs<O extends RecallOptions>(a: string | O | undefined, b: O | undefined): [string, O] {
+  if (typeof a === 'object') return ['', a]
+  return [a?.trim() ?? '', b ?? ({} as O)]
+}
+
+/** Whether the options name something to list without a question, as the API counts it. */
+function filtered(o: RecallFilters): boolean {
+  return Boolean(
+    o.tags?.length ||
+      o.tagsAll?.length ||
+      o.tiers?.length ||
+      o.paths?.length ||
+      o.since ||
+      o.until,
+  )
+}
+
+/**
+ * A time as the API reads it. Epoch seconds outside 9–11 digits are not read
+ * as epochs, so a Date that far out goes as RFC 3339 instead.
+ */
+function timeArg(t: TimeInput | undefined): number | string | undefined {
+  if (t === undefined || typeof t === 'string') return t
+  if (typeof t === 'number') return Math.floor(t)
+  const ms = t.getTime()
+  if (Number.isNaN(ms)) throw new GitloomError('invalid_date', 'Invalid Date', 0)
+  const s = Math.floor(ms / 1000)
+  return s >= 1e8 && s < 1e11 ? s : t.toISOString()
 }
 
 function abortedError(): GitloomError {

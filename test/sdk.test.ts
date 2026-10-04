@@ -246,7 +246,7 @@ describe('recall options', () => {
       paths: 'facts/events,incidents',
       tags: 'sport',
       tags_all: 'a,b',
-      since: '2026-01-01T00:00:00.000Z',
+      since: '1767225600',
       until: '2026-06-30',
       min_score: '0.4',
       context: '0',
@@ -291,6 +291,131 @@ describe('recall options', () => {
     expect(res.filteredOut).toBe(2)
     expect(res.candidates).toBe(3)
     expect(res.timings.vector_ms).toBe(5)
+  })
+})
+
+function query(url: URL): Record<string, string> {
+  const out: Record<string, string> = {}
+  url.searchParams.forEach((v, k) => {
+    out[k] = v
+  })
+  return out
+}
+
+describe('tags and times on recall', () => {
+  const empty = { body: { namespace: 'default', memories: [], millis: 1 } }
+
+  it('sends the time range, its field and zone, and converts each time form', async () => {
+    const { gl, calls } = client([empty])
+    await gl.recall('trips', {
+      since: new Date('2026-05-01T00:00:00Z'),
+      until: 1780271999.9,
+      timeField: 'occurred',
+      tz: 'Asia/Kolkata',
+    })
+    const url = new URL(calls[0]!.url)
+    expect(query(url)).toMatchObject({
+      since: '1777593600',
+      until: '1780271999',
+      time_field: 'occurred',
+      tz: 'Asia/Kolkata',
+    })
+  })
+
+  it('sends a string time as is, and a Date the API cannot read as an epoch as RFC 3339', async () => {
+    const { gl, calls } = client([empty])
+    await gl.recall('x', { since: new Date('1969-07-20T20:17:00Z'), until: '2026-05-31' })
+    const url = new URL(calls[0]!.url)
+    expect(url.searchParams.get('since')).toBe('1969-07-20T20:17:00.000Z')
+    expect(url.searchParams.get('until')).toBe('2026-05-31')
+  })
+
+  // A raw # ends the query string, so the server would see an empty filter.
+  it('URL-encodes tags, # included', async () => {
+    const { gl, calls } = client([empty])
+    await gl.recall('x', { tags: ['#launch', 'q3 plans'], tagsAll: ['client:acme'] })
+    expect(calls[0]!.url).toContain('tags=%23launch%2Cq3+plans')
+    expect(calls[0]!.url).not.toContain('#')
+    const url = new URL(calls[0]!.url)
+    expect(url.searchParams.get('tags')).toBe('#launch,q3 plans')
+    expect(url.searchParams.get('tags_all')).toBe('client:acme')
+  })
+
+  it('lists by filter without a query', async () => {
+    const { gl, calls } = client([empty, empty, empty])
+    await gl.recall({ tags: ['lease'], timeField: 'occurred', since: '2026-03-01' })
+    await gl.recall(undefined, { paths: ['facts/home'] })
+    await gl.recall('', { tiers: ['incidents'] })
+    for (const c of calls) {
+      const url = new URL(c.url)
+      expect(url.searchParams.has('q')).toBe(false)
+      expect(url.searchParams.has('mode')).toBe(false)
+    }
+    expect(new URL(calls[0]!.url).searchParams.get('tags')).toBe('lease')
+    expect(new URL(calls[1]!.url).searchParams.get('paths')).toBe('facts/home')
+  })
+
+  it('renders a filter-only context', async () => {
+    const { gl, calls } = client([
+      { body: { namespace: 'default', memories: [{ path: 'facts/a.md', score: 1, content: 'Lease ends in May.' }], millis: 1 } },
+    ])
+    const ctx = await gl.context({ tags: ['lease'] })
+    expect(ctx?.content).toContain('Lease ends in May.')
+    expect(new URL(calls[0]!.url).searchParams.has('q')).toBe(false)
+  })
+
+  it('refuses a recall with neither a query nor a filter before calling the server', async () => {
+    const { gl, calls } = client([empty])
+    await expect(gl.recall({})).rejects.toMatchObject({ code: 'missing_query', status: 0 })
+    await expect(gl.recall('  ')).rejects.toMatchObject({ code: 'missing_query' })
+    // A zone or a time field says how to read a range, not what to list.
+    await expect(gl.recall({ timeField: 'created', tz: 'UTC', tags: [] })).rejects.toMatchObject({ code: 'missing_query' })
+    await expect(gl.context({})).rejects.toMatchObject({ code: 'missing_query' })
+    expect(calls).toHaveLength(0)
+  })
+
+  it('reads times as Dates and keeps the deprecated strings', async () => {
+    const { gl } = client([
+      {
+        body: {
+          namespace: 'default',
+          memories: [
+            {
+              path: 'facts/gear/a7iii.md', tier: 'facts', content: 'Bought a Sony A7III.', score: 0.93, matched: ['cue'],
+              tags: ['gear', 'camera'], user_tags: ['gear'],
+              created_at: 1785492131, updated_at: 1785492200, occurred_at: 1785499200, expires_at: 1788091200,
+              occurred_source: 'user', occurred_precision: 'day',
+              created: '2026-07-31T10:02:11Z', updated: '2026-07-31T10:03:20Z',
+            },
+            { path: 'facts/b.md', tier: 'facts', content: 'B.', score: 0.5, matched: ['graph'] },
+          ],
+          millis: 1,
+        },
+      },
+    ])
+    const [m, bare] = (await gl.recall('camera')).memories
+    expect(m!.userTags).toEqual(['gear'])
+    expect(m!.tags).toEqual(['gear', 'camera'])
+    expect(m!.createdAt).toEqual(new Date(1785492131 * 1000))
+    expect(m!.updatedAt).toEqual(new Date(1785492200 * 1000))
+    expect(m!.occurredAt?.toISOString()).toBe('2026-07-31T12:00:00.000Z')
+    expect(m!.expiresAt).toBeInstanceOf(Date)
+    expect([m!.occurredSource, m!.occurredPrecision]).toEqual(['user', 'day'])
+    expect([m!.created, m!.updated]).toEqual(['2026-07-31T10:02:11Z', '2026-07-31T10:03:20Z'])
+    expect(m).not.toHaveProperty('created_at')
+    expect(m).not.toHaveProperty('user_tags')
+    for (const k of ['userTags', 'createdAt', 'updatedAt', 'occurredAt', 'expiresAt', 'occurredSource', 'occurredPrecision']) {
+      expect(bare![k as keyof typeof bare]).toBeUndefined()
+    }
+  })
+
+  it('carries the new filters through answer', async () => {
+    const { gl, calls } = client([{ body: { namespace: 'default', memories: [], answer: 'Goa.', millis: 1 } }])
+    await gl.answer('where did we travel', { tags: ['trip'], timeField: 'occurred', since: '2026-05-01', tz: 'Asia/Kolkata' })
+    const url = new URL(calls[0]!.url)
+    expect(query(url)).toMatchObject({
+      q: 'where did we travel', mode: 'summary', tags: 'trip', time_field: 'occurred', since: '2026-05-01', tz: 'Asia/Kolkata',
+    })
   })
 })
 

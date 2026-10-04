@@ -3,7 +3,15 @@ export interface Memory {
   content: string
 }
 
-export interface RememberOptions {
+/**
+ * A time as the API reads it. A `Date` is sent as epoch seconds, a number is
+ * epoch seconds, and a string is sent as is: RFC 3339 with an offset, a date
+ * (`YYYY-MM-DD`, that calendar day), or a datetime without an offset, read in
+ * the request's timezone.
+ */
+export type TimeInput = Date | number | string
+
+export interface WriteOptions {
   namespace?: string | undefined
   /** Abandon the request. An agent that drops a turn should drop its calls too. */
   signal?: AbortSignal | undefined
@@ -15,14 +23,153 @@ export interface RememberOptions {
    * the quota twice. Turn it on only where a duplicate is cheaper than a loss.
    */
   retryOnServerError?: boolean | undefined
+  /** IANA zone, e.g. `Asia/Kolkata`, that a datetime without an offset is read in. */
+  timezone?: string | undefined
+}
+
+export type ForgetOptions = Omit<WriteOptions, 'timezone'>
+
+export interface RememberOptions extends WriteOptions {
   /** Your id for the conversation. Useful for tracing a write back to its source. */
   sessionId?: string | undefined
+  /** Tags every memory drawn from the conversation carries. */
+  tags?: string[] | undefined
   /**
-   * The date the conversation HAPPENED (YYYY-MM-DD), which is what the memories
-   * are dated by. Leave unset for now; set it when backfilling, or last year's
-   * transcripts all claim to have happened today.
+   * When the conversation HAPPENED, which is what its memories are dated by.
+   * Leave unset for now; set it when backfilling, or last year's transcripts
+   * all claim to have happened today.
    */
+  occurredAt?: TimeInput | undefined
+  /** @deprecated Use `occurredAt`. */
   date?: string | undefined
+}
+
+/** One already-formed memory to store: the input to `write`, as `RecalledMemory` is the output of `recall`. */
+export interface NewMemory {
+  /**
+   * Repo-relative, ending in `.md`, under facts/, incidents/, rules/ or
+   * skills/. The directory is the topic: `facts/people/maya.md`.
+   */
+  path: string
+  /** Markdown. Its `##` headers become separately addressable sections. */
+  content: string
+  tags?: string[] | undefined
+  /** When what the memory is ABOUT happened, not when it was written. */
+  occurredAt?: TimeInput | undefined
+  /** @deprecated Use `occurredAt`. */
+  date?: string | undefined
+  /** In [0, 1]. Breaks ties between memories that contradict each other. */
+  confidence?: number | undefined
+  /** Expires an incident, e.g. `30d`. Only meaningful under incidents/. */
+  ttl?: string | undefined
+  /** A memory this one replaces, so the update wins over what it contradicts. */
+  supersedes?: string | undefined
+  /** 2–5 short phrasings of how someone would later ASK for this. */
+  cues?: string[] | undefined
+  /** Paths of related memories, optionally labelled: `spouse: facts/people/maya.md`. */
+  related?: string[] | undefined
+}
+
+/** One memory read back by path. */
+export interface StoredMemory {
+  namespace: string
+  path: string
+  title?: string
+  tier?: string
+  kind?: string
+  content: string
+  tags?: string[]
+  confidence?: number
+  cues?: string[]
+  related?: string[]
+  created?: string
+  updated?: string
+}
+
+/** One level of the hierarchical table of contents. */
+export interface TreeNode {
+  path: string
+  title?: string
+  kind?: string
+  tier?: string
+  summary?: string
+  children?: TreeNode[]
+}
+
+export interface TreeOptions {
+  namespace?: string | undefined
+  /** Roots the tree; unset is the whole memory. */
+  path?: string | undefined
+  /** How far down to descend. Default 2, maximum 8. */
+  depth?: number | undefined
+  signal?: AbortSignal | undefined
+}
+
+export interface TreeResult {
+  namespace: string
+  depth: number
+  tree: TreeNode
+  millis: number
+}
+
+/** One directory in the memory, with how many memories it holds. */
+export interface Topic {
+  path: string
+  name: string
+  tier: string
+  parent: string
+  depth: number
+  memories: number
+}
+
+export interface TopicsOptions {
+  namespace?: string | undefined
+  tier?: Tier | undefined
+  /** Only topics under this path. */
+  prefix?: string | undefined
+  /** Case-insensitive substring on the leaf name. */
+  like?: string | undefined
+  maxDepth?: number | undefined
+  minFiles?: number | undefined
+  limit?: number | undefined
+  signal?: AbortSignal | undefined
+}
+
+export interface TopicsResult {
+  namespace: string
+  topics: Topic[]
+  millis: number
+}
+
+/** One memory in the relationship graph. */
+export interface GraphNode {
+  path: string
+  tier: string
+  kind: string
+  title?: string
+}
+
+/** One declared relationship between two memories. */
+export interface GraphEdge {
+  src: string
+  dst: string
+  label?: string
+  origin?: string
+}
+
+export interface GraphOptions {
+  namespace?: string | undefined
+  limit?: number | undefined
+  signal?: AbortSignal | undefined
+}
+
+export interface GraphResult {
+  namespace: string
+  nodes: GraphNode[]
+  edges: GraphEdge[]
+  /** The graph was larger than one response, so the picture is partial. */
+  truncated: boolean
+  millis: number
 }
 
 export interface RememberResult {
@@ -54,13 +201,26 @@ export interface RecallFilters {
   tags?: string[] | undefined
   /** Only memories carrying every one of these tags. */
   tagsAll?: string[] | undefined
-  /** Only memories updated on or after this date. */
-  since?: string | Date | undefined
-  /** Only memories updated on or before this date. */
-  until?: string | Date | undefined
+  /** Only memories whose `timeField` is at or after this. */
+  since?: TimeInput | undefined
+  /** Only memories whose `timeField` is at or before this. A date alone includes that whole day. */
+  until?: TimeInput | undefined
+  /** Which time `since` and `until` bound. Default `updated`. */
+  timeField?: TimeField | undefined
+  /** IANA zone a date or datetime without an offset is read in. Default UTC. */
+  tz?: string | undefined
   /** Include TTL-expired incidents. Default false. */
   includeExpired?: boolean | undefined
 }
+
+/** When its subject happened, when it was written, or when it last changed. */
+export type TimeField = 'occurred' | 'created' | 'updated'
+
+/** How a memory's `occurredAt` is known: you said, the memory names the day, its conversation's date, or when it was written. */
+export type OccurredSource = 'user' | 'extracted' | 'said' | 'written'
+
+/** `day` when only the date is known, held as noon UTC on that date; otherwise `instant`. */
+export type OccurredPrecision = 'day' | 'instant'
 
 /** How the lane path orders what it finds: by lane score, or with a ranking model. */
 export type RecallRank = 'fused' | 'jev'
@@ -169,8 +329,22 @@ export interface RecalledMemory {
   sections?: string[]
   /** For a graph neighbour, the memories it was reached from. */
   via?: string[]
+  /** Your tags first, then the ones GitLoom inferred. */
   tags?: string[]
+  /** Your tags alone. */
+  userTags?: string[]
+  createdAt?: Date
+  updatedAt?: Date
+  /** When the memory's subject happened. */
+  occurredAt?: Date
+  occurredSource?: OccurredSource
+  /** At `day`, `occurredAt` is noon UTC on the date: show it as a date. */
+  occurredPrecision?: OccurredPrecision
+  /** When a memory with a TTL expires. */
+  expiresAt?: Date
+  /** @deprecated Use `createdAt`. */
   created?: string
+  /** @deprecated Use `updatedAt`. */
   updated?: string
   confidence?: number
   cues?: string[]
@@ -212,6 +386,7 @@ export interface LaneTiming {
 
 export interface RecallResult {
   namespace: string
+  /** Empty when the filters listed memories without a question. */
   query: string
   mode: RecallMode
   /** Ranked memories, best first. Empty rather than absent when nothing matched. */
@@ -234,6 +409,11 @@ export interface RecallResult {
   filteredOut: number
   millis: number
   timings: RecallTimings
+}
+
+export interface ContextOptions extends RecallOptions {
+  /** The line above the memories. Defaults to framing them as background. */
+  header?: string | undefined
 }
 
 export interface AnswerOptions extends Omit<RecallOptions, 'mode'> {
