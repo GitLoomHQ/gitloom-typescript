@@ -136,8 +136,8 @@ spaces and `- _ . : / # @` — up to 32 tags of 64 characters. A refusal throws 
 `GitloomError` whose `code` is `invalid_tag`, `invalid_date` or
 `invalid_timezone`, and whose message names the field, e.g. `memories[1].tags[0]`.
 
-Recalled memories carry `userTags` (yours alone; `tags` lists yours first, then
-the inferred ones) and `createdAt`, `updatedAt`, `occurredAt` and `expiresAt` as
+Recalled memories, and `get()`, carry `userTags` (yours alone; `tags` lists
+yours first, then the inferred ones) and `createdAt`, `updatedAt`, `occurredAt` and `expiresAt` as
 `Date`s. `occurredPrecision: 'day'` means only the date is known, held as noon
 UTC on it, so show it as a date; `occurredSource` says how it is known. The
 `created` and `updated` strings remain, deprecated.
@@ -204,6 +204,8 @@ In those tools, `recall_memory` takes `tags`, `since`, `until` and `time_field`
 (default `occurred`), and lists by filter when the model leaves out `query`;
 each memory it hands back starts with the day it happened, e.g.
 `- [2023-05-29] …`. `save_memory` takes `tags` and `occurred_at`.
+`runToolResult` returns `{ text, isError }` for hosts, like MCP, that mark a
+failed tool call; `runTool` returns the text alone.
 
 ## Multimodal
 
@@ -219,6 +221,31 @@ await openai.chat.completions.create({
   conversation: 'chat-42',
 })
 ```
+
+## Errors
+
+Every failure is a `GitloomError` with a stable `code`, the HTTP `status` (0
+when no response came back), and a readable `message`.
+
+```ts
+import { GitloomError } from '@gitloomhq/sdk'
+
+try {
+  await memory.recall('what camera do I own')
+} catch (e) {
+  if (!(e instanceof GitloomError)) throw e
+  if (e.code === 'unauthorized') { /* missing, wrong or revoked key */ }
+  else if (e.isRateLimited) { /* too many requests this minute; clears on its own */ }
+  else if (e.isQuotaExceeded) { /* the plan's monthly allowance is used */ }
+  else if (e.isBalanceExhausted) { /* the prepaid wallet is empty */ }
+  else console.error(e.code, e.status, e.message)
+}
+```
+
+The API's own codes come through unchanged (`invalid_tag`,
+`namespace_not_found`, `forbidden_namespace`, …). Anything else is
+`http_<status>` with whatever the response said. 5xx responses, timeouts and
+network errors are retried on reads; a 4xx never is.
 
 ## Docs
 

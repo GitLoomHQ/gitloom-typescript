@@ -32,6 +32,25 @@
   the UTC day it happened (`- [2023-05-29] …`); ingestion times are never
   shown. `save_memory` takes `tags` and `occurred_at`, and a refused tag or
   date comes back as text naming it.
+- **`get()` carries tags and times too**: `userTags`, and `createdAt`,
+  `updatedAt`, `occurredAt` and `expiresAt` as `Date`s, with
+  `occurredSource` and `occurredPrecision`. `tags` and `userTags` are `[]`
+  rather than null on an untagged memory.
+- **Errors without the API's envelope read clearly.** The gateway's own 401
+  and 403 (`{"message":…}`, no code) become code `unauthorized` with a message
+  saying what to check; an enveloped 403 such as `forbidden_namespace` keeps
+  its code. Any other bare error is `http_<status>`, and its message is the
+  body's `message`, else its text (no longer thrown away), else the status
+  text. A JSON body that is not an object no longer matters.
+- **`isQuotaExceeded` is true only for `quota_exceeded`.** It was true for any
+  429, so a per-minute rate limit read as the monthly quota. New:
+  `isRateLimited` (`rate_limited`) and `isBalanceExhausted`
+  (`balance_exhausted`). Code that treated every 429 as the quota should check
+  `isRateLimited` too.
+- **Tool failures name their code**: `The memory service failed (<code>): …`.
+  `runToolResult()` returns `{ text, isError }`, with `isError` set on every
+  failure, a refusal or a missing input included; `runTool()` returns the same
+  text as before.
 - **`recall()` and `answer()` take `rank`, `maxChars` and `model`.** `rank:
   'fused' | 'jev'` retrieves on the lane path, which also reaches conversation
   turns and the dates in a question; `maxChars` caps the memory content
