@@ -1,7 +1,30 @@
 # Changelog
 
-## Unreleased
+## 0.10.0 — unreleased
 
+- **Direct memory primitives**, at parity with the Go SDK: `write(memories)`
+  stores already-formed memories as given; `get(path)` reads one back (a file
+  or `file.md#section`); `forget(paths)` deletes; `tree()`, `topics()` and
+  `graph()` show what the namespace holds. `write` refuses a path not ending
+  in `.md` before sending, and `write([])` / `forget([])` send nothing.
+- **Tags and when it happened, on writes.** `remember()` takes `tags` (on every
+  memory drawn from the conversation), `occurredAt` and `timezone`; each
+  `write()` memory takes `tags` and `occurredAt`, and `write()` a `timezone`.
+  `occurredAt` is a `Date` (sent as epoch seconds), epoch seconds, or a string
+  sent as is. `date` still works and is deprecated.
+- **Time filters on `recall()`, `answer()` and `context()`**: `since` and
+  `until` take a `Date`, epoch seconds or a string; `timeField` picks which
+  time they bound (`occurred`, `created` or `updated`, the default); `tz` reads
+  dates and offset-less times in a zone. A `Date` is now sent as epoch seconds
+  rather than RFC 3339.
+- **Recall without a query.** `recall({ tags: [...] })` (or `recall(undefined,
+  {...})`, or `context({...})`) lists every memory the filters match, newest
+  first, each scored 1. With neither a query nor a filter, it throws
+  `missing_query` before sending a request.
+- **Times on recalled memories.** Each carries `userTags`, and `createdAt`,
+  `updatedAt`, `occurredAt` and `expiresAt` as `Date`s, with
+  `occurredSource` and `occurredPrecision`. `created` and `updated` remain,
+  deprecated.
 - **`recall()` and `answer()` take `rank`, `maxChars` and `model`.** `rank:
   'fused' | 'jev'` retrieves on the lane path, which also reaches conversation
   turns and the dates in a question; `maxChars` caps the memory content

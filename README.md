@@ -61,7 +61,7 @@ await conv.branches()
 ```
 
 These act on the **same managed conversation** the completions flow through.
-Direct memory: `openai.gitloom.memory.recall(...)` / `.remember(...)` — every
+Direct memory: `openai.gitloom.memory.recall(...)` / `.remember(...)` / `.write(...)` — every
 result is one whole memory with a calibrated 0–1 score, which arms matched it,
 its tags and dates, its edges, and its last commit.
 
@@ -109,6 +109,71 @@ conversation `turn`) and the days it was `said`. `maxChars` caps the memory
 content returned: a memory that does not fit is cut to its opening sentence and
 the sentences matching the question, and marked `excerpted`. `model` picks the
 model that reads the memories in `summary` or `agentic` mode.
+
+## Tags and when it happened
+
+```ts
+// A conversation: every memory drawn from it carries the tags, and is dated
+// by when the conversation happened rather than when you sent it.
+await memory.remember(
+  [{ role: 'user', content: 'We signed the lease on the Koramangala flat today.' }],
+  { tags: ['home', 'lease'], occurredAt: '2026-03-01', timezone: 'Asia/Kolkata' },
+)
+
+// Memories you already formed, stored as given — no model decides what to keep.
+await memory.write([
+  { path: 'facts/home/lease.md', content: 'The Koramangala lease runs to 2027-02-28.',
+    tags: ['home', 'lease'], occurredAt: new Date('2026-03-01T10:30:00+05:30'),
+    cues: ['when does my lease end'] },
+])
+```
+
+`occurredAt` takes a `Date` (sent as epoch seconds), epoch seconds, or a
+string: RFC 3339 with an offset, a date (`YYYY-MM-DD`, that calendar day), or a
+datetime without an offset, read in `timezone`. `date` still works and is
+deprecated. Tags are trimmed and lowercased, and may hold letters, digits,
+spaces and `- _ . : / # @` — up to 32 tags of 64 characters. A refusal throws a
+`GitloomError` whose `code` is `invalid_tag`, `invalid_date` or
+`invalid_timezone`, and whose message names the field, e.g. `memories[1].tags[0]`.
+
+Recalled memories carry `userTags` (yours alone; `tags` lists yours first, then
+the inferred ones) and `createdAt`, `updatedAt`, `occurredAt` and `expiresAt` as
+`Date`s. `occurredPrecision: 'day'` means only the date is known, held as noon
+UTC on it, so show it as a date; `occurredSource` says how it is known. The
+`created` and `updated` strings remain, deprecated.
+
+## Listing by filter
+
+```ts
+// No question: every memory the filters match, newest first by timeField.
+const { memories: lease } = await memory.recall({
+  tags: ['lease'],
+  timeField: 'occurred',            // occurred | created | updated (default)
+  since: '2026-01-01',
+  until: '2026-03-31',              // a date alone includes that whole day
+  tz: 'Asia/Kolkata',               // reads dates and offset-less times
+})
+
+// The same filters narrow a question.
+await memory.recall('where did we travel', {
+  tags: ['trip'], timeField: 'occurred', since: new Date('2026-05-01'),
+})
+```
+
+Without a query, at least one of `tags`, `tagsAll`, `since`, `until`, `tiers`
+or `paths` is needed — the SDK refuses before sending a request otherwise —
+every match scores 1, and `mode` must be `raw` with no `rank`.
+`context({ tags: ['lease'] })` lists the same way.
+
+## Reading by path
+
+```ts
+const file = await memory.get('facts/home/lease.md')      // or 'file.md#section'
+const { topics } = await memory.topics({ like: 'home' })  // check before inventing a topic
+const { tree } = await memory.tree({ path: 'facts', depth: 2 })
+const { nodes, edges } = await memory.graph()
+await memory.forget(['facts/home/old-lease.md'])          // asynchronous; git keeps history
+```
 
 ## Vocabulary and skills
 
