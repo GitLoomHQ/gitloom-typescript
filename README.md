@@ -21,9 +21,14 @@ const openai = withMemory(new OpenAI(), { memory })   // ← the only setup
 const res = await openai.chat.completions.create({
   model: 'gpt-4o',
   messages: [{ role: 'user', content: 'What camera do I own?' }],
+  // @ts-expect-error -- GitLoom reads conversation and removes it before the request is sent
   conversation: 'chat-42',                   // ← the only change per call
 })
 ```
+
+`conversation` is not in OpenAI's parameter types yet, so TypeScript needs the
+`@ts-expect-error` above it; at runtime GitLoom takes the field off the request
+before OpenAI sees it.
 
 That's the whole loop. Behind that one call: the stored conversation supplies
 the earlier turns (you pass **only the new message** — never append anything),
@@ -210,17 +215,28 @@ failed tool call; `runTool` returns the text alone.
 ## Multimodal
 
 ```ts
-import { textPart, imageData } from '@gitloomhq/sdk'
+// Upload the photo once and hand the model a short-lived URL to it, so the
+// stored turn holds a reference rather than the bytes.
+const { id } = await memory.media.upload({ contentType: 'image/png', base64: b64 })
+const { url } = await memory.media.get(id)
 
 await openai.chat.completions.create({
   model: 'gpt-4o',
   messages: [{ role: 'user', content: [
-    textPart("what's in this photo?"),
-    imageData(b64, 'image/png'),   // uploaded transparently; stored by reference
+    { type: 'text', text: "what's in this photo?" },
+    { type: 'image_url', image_url: { url } },
   ] }],
+  // @ts-expect-error -- GitLoom reads conversation and removes it before the request is sent
   conversation: 'chat-42',
 })
 ```
+
+Content parts go to the model exactly as you write them, so they take the
+provider's own shape. `textPart`, `imagePart` and `imageData` build GitLoom's
+parts for `conv.append()` on a conversation you drive yourself, where
+`imageData`'s bytes are uploaded on append and stored by reference.
+
+The URL expires after 15 minutes; in a conversation that stays open longer, fetch a fresh one with `memory.media.get(id)` before the image is sent again.
 
 ## Errors
 
